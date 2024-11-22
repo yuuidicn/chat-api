@@ -30,6 +30,8 @@ type Log struct {
 	IsStream         bool   `json:"is_stream" gorm:"default:false"`
 	Multiplier       string `json:"multiplier"`
 	UserQuota        int    `json:"userQuota"`
+	AttemptsLog      string `json:"attempts_log"`
+	Ip               string `json:"ip"`
 }
 
 type LogStatistic struct {
@@ -41,6 +43,25 @@ type LogStatistic struct {
 	CompletionTokens int    `gorm:"column:completion_tokens"`
 }
 
+type UserLogResponse struct {
+	Id               int    `json:"id" gorm:"index:idx_created_at_id,priority:1"`
+	UserId           int    `json:"user_id" gorm:"index"`
+	CreatedAt        int64  `json:"created_at" gorm:"bigint;index:idx_created_at_id,priority:2;index:idx_created_at_type"`
+	Type             int    `json:"type" gorm:"index:idx_created_at_type"`
+	Username         string `json:"username" gorm:"index:index_username_model_name,priority:2;default:''"`
+	TokenName        string `json:"token_name" gorm:"index;default:''"`
+	ModelName        string `json:"model_name" gorm:"index;index:index_username_model_name,priority:1;default:''"`
+	Quota            int    `json:"quota" gorm:"default:0"`
+	PromptTokens     int    `json:"prompt_tokens" gorm:"default:0"`
+	CompletionTokens int    `json:"completion_tokens" gorm:"default:0"`
+	TokenId          int    `json:"token_id" gorm:"default:0;index"`
+	UseTime          int    `json:"use_time" gorm:"bigint;default:0"`
+	IsStream         bool   `json:"is_stream" gorm:"default:false"`
+	Multiplier       string `json:"multiplier"`
+	UserQuota        int    `json:"userQuota"`
+	Ip               string `json:"ip"`
+}
+
 const (
 	LogTypeUnknown = iota
 	LogTypeTopup
@@ -48,6 +69,18 @@ const (
 	LogTypeManage
 	LogTypeSystem
 )
+
+type HourlyStats struct {
+	Hour   string  `json:"hour"`
+	Count  int     `json:"count"`
+	Amount float64 `json:"amount"`
+}
+
+type ModelStats struct {
+	ModelName string  `json:"model_name"`
+	Count     int     `json:"count"`
+	Amount    float64 `json:"amount"`
+}
 
 func GetLogByKey(key string) (logs []*Log, err error) {
 	err = DB.Joins("left join tokens on tokens.id = logs.token_id").
@@ -130,11 +163,11 @@ func RecordLog(userId int, logType int, quota int, multiplier string) {
 		common.SysError("failed to record log: " + err.Error())
 	}
 
-	LogQuotaData(userId, GetUsernameById(userId), LogTypeTopup, 0, "", quota, common.GetTimestamp())
+	LogQuotaData(userId, GetUsernameById(userId), LogTypeTopup, 0, "", 0, 0, quota, common.GetTimestamp())
 
 }
 
-func RecordConsumeLog(ctx context.Context, userId int, channelId int, channelName string, promptTokens int, completionTokens int, modelName string, tokenName string, quota int, content string, tokenId int, multiplier string, userQuota int, useTimeSeconds int, isStream bool) {
+func RecordConsumeLog(ctx context.Context, userId int, channelId int, channelName string, promptTokens int, completionTokens int, modelName string, tokenName string, quota int, content string, tokenId int, multiplier string, userQuota int, useTimeSeconds int, isStream bool, AttemptsLog string, Ip string) {
 	common.LogInfo(ctx, fmt.Sprintf("record consume log: userId=%d, 用户调用前余额=%d, channelId=%d, promptTokens=%d, completionTokens=%d, modelName=%s, tokenName=%s, quota=%d,multiplier=%s", userId, userQuota, channelId, promptTokens, completionTokens, modelName, tokenName, quota, multiplier))
 	if !config.LogConsumeEnabled {
 		return
@@ -158,13 +191,15 @@ func RecordConsumeLog(ctx context.Context, userId int, channelId int, channelNam
 		UserQuota:        userQuota,
 		UseTime:          useTimeSeconds,
 		IsStream:         isStream,
+		AttemptsLog:      AttemptsLog,
+		Ip:               Ip,
 	}
 	err := DB.Create(log).Error
 	if err != nil {
 		common.LogError(ctx, "failed to record log: "+err.Error())
 	}
 
-	LogQuotaData(userId, username, LogTypeConsume, channelId, modelName, quota, common.GetTimestamp())
+	LogQuotaData(userId, username, LogTypeConsume, channelId, modelName, promptTokens, completionTokens, quota, common.GetTimestamp())
 
 }
 
@@ -173,7 +208,9 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 	var count int64
 
 	tx := DB.Model(&Log{})
-	if logType != LogTypeUnknown {
+	if logType == 5 {
+		tx = tx.Where("attempts_log !=''")
+	} else if logType != LogTypeUnknown {
 		tx = tx.Where("type = ?", logType)
 	}
 	if modelName != "" {
@@ -206,7 +243,7 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 	return logs, count, err
 }
 
-func SearchLogsByDayAndModel(user_id, startTimestamp, endTimestamp int) (LogStatistics []*LogStatistic, err error) {
+func SearchLogsByDayAndModel(user_id int, startTimestamp, endTimestamp int64) (LogStatistics []*LogStatistic, err error) {
 	AdjustHour := common.AdjustHour
 	groupSelect := fmt.Sprintf("DATE_FORMAT(DATE_ADD(FROM_UNIXTIME(created_at), INTERVAL %d HOUR), '%%Y-%%m-%%d') as day", AdjustHour)
 
@@ -219,18 +256,18 @@ func SearchLogsByDayAndModel(user_id, startTimestamp, endTimestamp int) (LogStat
 	}
 
 	err = DB.Raw(`
-		SELECT `+groupSelect+`,
-		model_name, count(1) as request_count,
-		sum(quota) as quota,
-		sum(prompt_tokens) as prompt_tokens,
-		sum(completion_tokens) as completion_tokens
-		FROM logs
-		WHERE type=2
-		AND user_id= ?
-		AND created_at BETWEEN ? AND ?
-		GROUP BY day, model_name
-		ORDER BY day, model_name
-	`, user_id, startTimestamp, endTimestamp).Scan(&LogStatistics).Error
+        SELECT `+groupSelect+`,
+        model_name, sum(count) as request_count,
+        sum(quota) as quota,
+        sum(prompt_tokens) as prompt_tokens,
+        sum(completion_tokens) as completion_tokens
+        FROM quota_data
+        WHERE type=2
+        AND user_id= ?
+        AND created_at BETWEEN ? AND ?
+        GROUP BY day, model_name
+        ORDER BY day, model_name
+    `, user_id, startTimestamp, endTimestamp).Scan(&LogStatistics).Error
 
 	//fmt.Println(user_id, startTimestamp, endTimestamp)
 
@@ -392,4 +429,60 @@ func SumUsedToken(logType int, startTimestamp int64, endTimestamp int64, modelNa
 func DeleteOldLog(targetTimestamp int64) (int64, error) {
 	result := DB.Where("created_at < ?", targetTimestamp).Delete(&Log{})
 	return result.RowsAffected, result.Error
+}
+func SearchHourlyAndModelStats(userID int, tokenName, modelName, startTimestamp, endTimestamp string) (hourlyStats []HourlyStats, modelStats []ModelStats, err error) {
+	var hourlySelect, groupSelect string
+	AdjustHour := common.AdjustHour
+	switch {
+	case common.UsingPostgreSQL:
+		hourlySelect = "TO_CHAR(to_timestamp(created_at) + INTERVAL '%d hours', 'HH24:00') as hour"
+		groupSelect = "TO_CHAR(date_trunc('day', to_timestamp(created_at) + INTERVAL '%d hours'), 'YYYY-MM-DD') as day"
+	case common.UsingSQLite:
+		hourlySelect = "strftime('%H:00', datetime(created_at, 'unixepoch', '+%d hours')) as hour"
+		groupSelect = "strftime('%%Y-%%m-%%d', datetime(created_at, 'unixepoch', '+%d hours')) as day"
+	default: // MySQL/MariaDB
+		hourlySelect = "DATE_FORMAT(DATE_ADD(FROM_UNIXTIME(created_at), INTERVAL %d HOUR), '%%H:00') as hour"
+		groupSelect = "DATE_FORMAT(DATE_ADD(FROM_UNIXTIME(created_at), INTERVAL %d HOUR), '%%Y-%%m-%%d') as day"
+	}
+
+	hourlySelect = fmt.Sprintf(hourlySelect, AdjustHour)
+	groupSelect = fmt.Sprintf(groupSelect, AdjustHour)
+
+	hourlyQuery := DB.Table("quota_data").
+		Select(hourlySelect + ", SUM(count) as count, SUM(quota)/500000 as amount")
+
+	modelQuery := DB.Table("quota_data").
+		Select("model_name, SUM(count) as count, SUM(quota)/500000 as amount")
+
+	// 添加条件
+	conditions := make([]string, 0)
+	values := make([]interface{}, 0)
+
+	conditions = append(conditions, "created_at BETWEEN ? AND ?")
+	values = append(values, startTimestamp, endTimestamp)
+
+	conditions = append(conditions, "user_id = ?")
+	values = append(values, userID)
+
+	if tokenName != "" {
+		conditions = append(conditions, "token_name LIKE ?")
+		values = append(values, tokenName+"%")
+	}
+	if modelName != "" {
+		conditions = append(conditions, "model_name LIKE ?")
+		values = append(values, modelName+"%")
+	}
+
+	whereClause := strings.Join(conditions, " AND ")
+
+	hourlyQuery = hourlyQuery.Where(whereClause, values...).Group("hour").Order("hour")
+	modelQuery = modelQuery.Where(whereClause, values...).Group("model_name").Order("count DESC")
+
+	err = hourlyQuery.Find(&hourlyStats).Error
+	if err != nil {
+		return
+	}
+
+	err = modelQuery.Find(&modelStats).Error
+	return
 }

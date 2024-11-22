@@ -171,6 +171,22 @@ const LogsTable = () => {
             },
         },
         {
+            title: 'IP',
+            dataIndex: 'ip',
+            render: (text, record, index) => {
+                return (
+                    record.type === 0 || record.type === 2 ?
+                        <div>
+                            <Tag color={stringToColor(text)} size='large' onClick={() => {
+                                copyText(text)
+                            }}> {text} </Tag>
+                        </div>
+                        :
+                        <></>
+                );
+            },
+        },
+        {
             title: '用时',
             dataIndex: 'use_time',
             render: (text, record, index) => {
@@ -237,6 +253,23 @@ const LogsTable = () => {
                 );
             },
         },
+        {
+            title: '重试',
+            dataIndex: 'attempts_log',
+            render: (text, record, index) => {
+                if (!text) {
+                    return '无';
+                }
+                const formattedText = text.replace(/\n/g, '<br/>');
+                return (
+                    <Tooltip content={<span dangerouslySetInnerHTML={{ __html: formattedText }} />} position="top">
+                        <span style={{ cursor: 'pointer' }}>过程</span>
+                    </Tooltip>
+                );
+            },
+        },
+        
+              
         ...(LogContentEnabled === 'true' ? [{
             title: '详情',
             dataIndex: 'content',
@@ -419,6 +452,7 @@ const LogsTable = () => {
                 <h3 style={{
                     color: '#333', 
                     fontSize: '1.2rem', 
+                    marginTop: '50px', 
                     marginBottom: '10px',
                     backgroundColor: '#f8f8f8', 
                     padding: '10px',
@@ -489,6 +523,7 @@ const LogsTable = () => {
                     <Select.Option value="2">消费</Select.Option>
                     <Select.Option value="3">管理</Select.Option>
                     <Select.Option value="4">系统</Select.Option>
+                    <Select.Option value="5">重试</Select.Option>
                 </Select>
                 <Modal
                     visible={isModalOpen}

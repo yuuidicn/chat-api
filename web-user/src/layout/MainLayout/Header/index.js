@@ -1,24 +1,59 @@
+import React, { useState, useEffect } from 'react';
 import PropTypes from 'prop-types';
-
-// material-ui
 import { useTheme } from '@mui/material/styles';
-import { Avatar, Box, ButtonBase } from '@mui/material';
-
-// project imports
+import { Avatar, Box, ButtonBase, Button } from '@mui/material';
+import { Link } from 'react-router-dom';
 import LogoSection from '../LogoSection';
 import ProfileSection from './ProfileSection';
-
-// assets
+import Notice from './Notice';
+import ThemeButton from 'ui-component/ThemeButton';
 import { IconMenu2 } from '@tabler/icons-react';
-
-// ==============================|| MAIN NAVBAR / HEADER ||============================== //
+import { API } from 'utils/api';
 
 const Header = ({ handleLeftDrawerToggle }) => {
   const theme = useTheme();
+  const [chatLink, setChatLink] = useState('');
+
+  useEffect(() => {
+    loadStatus();
+  }, []);
+
+  const loadStatus = async () => {
+    try {
+      const res = await API.get('/api/status');
+      const { success, data } = res.data;
+      if (success && data.chat_link) {
+        localStorage.setItem('chat_link', data.chat_link);
+        setChatLink(data.chat_link);
+      } else {
+        localStorage.removeItem('chat_link');
+        setChatLink('');
+      }
+    } catch (error) {
+      console.error('Error loading status:', error);
+      localStorage.removeItem('chat_link');
+      setChatLink('');
+    }
+  };
+
+  const NavButton = ({ to, children, chatLink }) => (
+    <Button
+      component={Link}
+      to={chatLink ? `${to}?chat_link=${encodeURIComponent(chatLink)}` : to}
+      sx={{
+        color: theme.palette.text.primary,
+        '&:hover': {
+          backgroundColor: 'transparent',
+          color: theme.palette.primary.main
+        }
+      }}
+    >
+      {children}
+    </Button>
+  );
 
   return (
     <>
-      {/* logo & toggler button */}
       <Box
         sx={{
           width: 228,
@@ -37,9 +72,8 @@ const Header = ({ handleLeftDrawerToggle }) => {
             sx={{
               ...theme.typography.commonAvatar,
               ...theme.typography.mediumAvatar,
+              ...theme.typography.menuButton,
               transition: 'all .2s ease-in-out',
-              background: theme.palette.secondary.light,
-              color: theme.palette.secondary.dark,
               '&:hover': {
                 background: theme.palette.secondary.dark,
                 color: theme.palette.secondary.light
@@ -55,7 +89,9 @@ const Header = ({ handleLeftDrawerToggle }) => {
 
       <Box sx={{ flexGrow: 1 }} />
       <Box sx={{ flexGrow: 1 }} />
-
+      <Notice />
+      {chatLink && <NavButton to="/chatweb" chatLink={chatLink}>对话</NavButton>}
+      <ThemeButton />
       <ProfileSection />
     </>
   );

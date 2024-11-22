@@ -4,41 +4,65 @@ import (
 	"encoding/json"
 	"fmt"
 	"one-api/common"
+	"one-api/common/client"
 	"one-api/common/config"
 	"strings"
+	"sync"
+	"time"
 
 	"gorm.io/gorm"
 )
 
 type Channel struct {
-	Id                 int     `json:"id"`
-	Type               int     `json:"type" gorm:"default:0"`
-	Key                string  `json:"key" gorm:"type:text"`
-	OpenAIOrganization *string `json:"openai_organization"`
-	Status             int     `json:"status" gorm:"default:1"`
-	Name               string  `json:"name" gorm:"index"`
-	Weight             *uint   `json:"weight" gorm:"default:0"`
-	CreatedTime        int64   `json:"created_time" gorm:"bigint"`
-	TestTime           int64   `json:"test_time" gorm:"bigint"`
-	ResponseTime       int     `json:"response_time"` // in milliseconds
-	BaseURL            *string `json:"base_url" gorm:"column:base_url;default:''"`
-	Other              string  `json:"other"`
-	Balance            float64 `json:"balance"` // in USD
-	BalanceUpdatedTime int64   `json:"balance_updated_time" gorm:"bigint"`
-	Models             string  `json:"models"`
-	Group              string  `json:"group" gorm:"type:varchar(255);default:'default'"`
-	UsedQuota          int64   `json:"used_quota" gorm:"bigint;default:0"`
-	UsedCount          int     `json:"used_count" gorm:"default:0"`
-	ModelMapping       *string `json:"model_mapping" gorm:"type:varchar(1024);default:''"`
-	Headers            *string `json:"headers" gorm:"type:varchar(1024);default:''"`
-	Priority           *int64  `json:"priority" gorm:"bigint;default:0"`
-	AutoBan            *int    `json:"auto_ban" gorm:"default:1"`
-	IsTools            *bool   `json:"is_tools" gorm:"default:true"`
-	TestedTime         *int    `json:"tested_time" gorm:"bigint"`
-	ModelTest          string  `json:"model_test"`
-	RateLimited        *bool   `json:"rate_limited" gorm:"default:false"`
-	IsImageURLEnabled  *int    `json:"is_image_url_enabled" gorm:"default:0"`
-	Config             string  `json:"config"`
+	Id                    int     `json:"id"`
+	Type                  int     `json:"type" gorm:"default:0"`
+	Key                   string  `json:"key" gorm:"type:text"`
+	OpenAIOrganization    *string `json:"openai_organization"`
+	Status                int     `json:"status" gorm:"default:1"`
+	Name                  string  `json:"name" gorm:"index"`
+	Weight                *uint   `json:"weight" gorm:"default:0"`
+	CreatedTime           int64   `json:"created_time" gorm:"bigint"`
+	TestTime              int64   `json:"test_time" gorm:"bigint"`
+	ResponseTime          int     `json:"response_time"` // in milliseconds
+	BaseURL               *string `json:"base_url" gorm:"column:base_url;default:''"`
+	Other                 string  `json:"other"`
+	Balance               float64 `json:"balance"` // in USD
+	BalanceUpdatedTime    int64   `json:"balance_updated_time" gorm:"bigint"`
+	Models                string  `json:"models"`
+	Tags                  string  `json:"tags" gorm:"type:varchar(255)"`
+	Group                 string  `json:"group" gorm:"type:varchar(255);default:'default'"`
+	UsedQuota             int64   `json:"used_quota" gorm:"bigint;default:0"`
+	UsedCount             int     `json:"used_count" gorm:"default:0"`
+	ModelMapping          *string `json:"model_mapping" gorm:"type:varchar(1024);default:''"`
+	Headers               *string `json:"headers" gorm:"type:varchar(1024);default:''"`
+	Priority              *int64  `json:"priority" gorm:"bigint;default:0"`
+	AutoBan               *int    `json:"auto_ban" gorm:"default:1"`
+	IsTools               *bool   `json:"is_tools" gorm:"default:true"`
+	ClaudeOriginalRequest *bool   `json:"claude_original_request" gorm:"default:false"`
+	TestedTime            *int    `json:"tested_time" gorm:"bigint"`
+	ModelTest             string  `json:"model_test"`
+	RateLimited           *bool   `json:"rate_limited" gorm:"default:false"`
+	RateLimitCount        *int    `json:"rate_limit_count" gorm:"default:0"`
+	IsImageURLEnabled     *int    `json:"is_image_url_enabled" gorm:"default:0"`
+	StatusCodeMapping     *string `json:"status_code_mapping" gorm:"type:varchar(1024);default:''"`
+	Config                string  `json:"config"`
+	ProxyURL              *string `json:"proxy_url"`
+	GcpAccount            *string `json:"gcp_account" gorm:"type:varchar(4096);default:''"`
+}
+type ChannelConfig struct {
+	Region       string `json:"region,omitempty"`
+	SK           string `json:"sk,omitempty"`
+	AK           string `json:"ak,omitempty"`
+	Cross        string `json:"cross,omitempty"`
+	UserID       string `json:"user_id,omitempty"`
+	APIVersion   string `json:"api_version,omitempty"`
+	LibraryID    string `json:"library_id,omitempty"`
+	Plugin       string `json:"plugin,omitempty"`
+	ProjectId    string `json:"project_id,omitempty"`
+	ClientId     string `json:"client_id,omitempty"`
+	ClientSecret string `json:"client_secret,omitempty"`
+	RefreshToken string `json:"refresh_token,omitempty"`
+	GeminiModel  string `json:"gemini_model,omitempty"`
 }
 
 func GetAllChannels(startIdx int, num int, selectAll bool, idSort bool) ([]*Channel, error) {
@@ -135,17 +159,30 @@ func GetRandomChannel() (*Channel, error) {
 }
 
 func BatchInsertChannels(channels []Channel) error {
-	var err error
-	err = DB.Create(&channels).Error
+	// 批量插入所有通道
+	err := DB.Create(&channels).Error
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to batch insert channels: %v", err)
 	}
+
+	// 为 Type 40 的通道调用 checkAndGetAccessToken
+	for i := range channels {
+		if channels[i].Type == 42 {
+			err = channels[i].checkAndGetAccessToken()
+			if err != nil {
+				return fmt.Errorf("failed to check and get access token for channel (Type 40, ID: %d): %v", channels[i].Id, err)
+			}
+		}
+	}
+
+	// 为所有通道添加能力（保持不变）
 	for _, channel_ := range channels {
 		err = channel_.AddAbilities()
 		if err != nil {
 			return err
 		}
 	}
+
 	return nil
 }
 
@@ -216,16 +253,11 @@ func (channel *Channel) GetModelHeaders() map[string]string {
 	return headers
 }
 
-func (channel *Channel) LoadConfig() (map[string]string, error) {
-	if channel.Config == "" {
-		return nil, nil
+func (channel *Channel) GetStatusCodeMapping() string {
+	if channel.StatusCodeMapping == nil {
+		return ""
 	}
-	cfg := make(map[string]string)
-	err := json.Unmarshal([]byte(channel.Config), &cfg)
-	if err != nil {
-		return nil, err
-	}
-	return cfg, nil
+	return *channel.StatusCodeMapping
 }
 
 func (channel *Channel) Insert() error {
@@ -235,7 +267,10 @@ func (channel *Channel) Insert() error {
 		return err
 	}
 	err = channel.AddAbilities()
-	return err
+	if err != nil {
+		return err
+	}
+	return channel.checkAndGetAccessToken()
 }
 
 func (channel *Channel) Update() error {
@@ -246,7 +281,50 @@ func (channel *Channel) Update() error {
 	}
 	DB.Model(channel).First(channel, "id = ?", channel.Id)
 	err = channel.UpdateAbilities()
-	return err
+	if err != nil {
+		return err
+	}
+	return channel.checkAndGetAccessToken()
+}
+
+func (channel *Channel) checkAndGetAccessToken() error {
+	if channel.Type == 42 {
+		var config ChannelConfig
+		err := json.Unmarshal([]byte(channel.Config), &config)
+		if err != nil {
+			return fmt.Errorf("failed to unmarshal config: %v", err)
+		}
+
+		var accessToken string
+		if channel.GcpAccount != nil && *channel.GcpAccount != "" {
+			accessToken, err = client.GetGCPAccessToken(channel.GcpAccount, channel.ProxyURL)
+			if err != nil {
+				return fmt.Errorf("failed to get GCP access token for channel %d: %w", channel.Id, err)
+			}
+		} else {
+			if config.ClientId == "" || config.ClientSecret == "" || config.RefreshToken == "" {
+				return fmt.Errorf("missing required OAuth2 config fields for channel %d", channel.Id)
+			}
+			accessToken, err = client.GetAccessToken(config.ClientId, config.ClientSecret, config.RefreshToken, channel.ProxyURL)
+			if err != nil {
+				return fmt.Errorf("failed to get OAuth2 access token for channel %d: %w", channel.Id, err)
+			}
+		}
+
+		if accessToken == "" {
+			return fmt.Errorf("received empty access token for channel %d", channel.Id)
+		}
+
+		// 使用 accessToken 进行后续操作
+		channel.Key = accessToken
+
+		// 更新数据库中的 key 字段
+		err = DB.Model(channel).Update("key", accessToken).Error
+		if err != nil {
+			return fmt.Errorf("failed to update channel key with new access token: %v", err)
+		}
+	}
+	return nil
 }
 
 func (channel *Channel) UpdateResponseTime(responseTime int64) {
@@ -317,4 +395,142 @@ func DeleteChannelByStatus(status int64) (int64, error) {
 func DeleteDisabledChannel() (int64, error) {
 	result := DB.Where("status = ? or status = ?", common.ChannelStatusAutoDisabled, common.ChannelStatusManuallyDisabled).Delete(&Channel{})
 	return result.RowsAffected, result.Error
+}
+
+func (channel *Channel) LoadConfig() (ChannelConfig, error) {
+	var cfg ChannelConfig
+	if channel.Config == "" {
+		return cfg, nil
+	}
+	err := json.Unmarshal([]byte(channel.Config), &cfg)
+	if err != nil {
+		return cfg, err
+	}
+	return cfg, nil
+}
+
+func StartScheduledRefreshAccessTokens() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			go func() {
+				err := ScheduledRefreshAccessTokens()
+				if err != nil {
+					common.SysError(fmt.Sprintf("定时刷新访问令牌时发生错误：%v", err))
+				}
+			}()
+		}
+	}
+}
+
+func ScheduledRefreshAccessTokens() error {
+	common.SysLog("开始定时刷新访问令牌")
+
+	var channels []Channel
+
+	// 查询所有 type = 40 的通道
+	err := DB.Where("type = ?", 42).Find(&channels).Error
+	if err != nil {
+		return fmt.Errorf("没有GCP通道：%v", err)
+	}
+
+	var wg sync.WaitGroup
+	semaphore := make(chan struct{}, 10) // 限制并发数为10
+
+	for _, channel := range channels {
+		wg.Add(1)
+		semaphore <- struct{}{} // 获取信号量
+		go func(ch Channel) {
+			defer wg.Done()
+			defer func() { <-semaphore }() // 释放信号量
+
+			var config ChannelConfig
+			err := json.Unmarshal([]byte(ch.Config), &config)
+			if err != nil {
+				common.SysError(fmt.Sprintf("解析通道 %d 的配置失败：%v", ch.Id, err.Error()))
+				return
+			}
+			var accessToken string
+			if ch.GcpAccount != nil && *ch.GcpAccount != "" {
+				accessToken, err = client.GetGCPAccessToken(ch.GcpAccount, ch.ProxyURL)
+			} else {
+				accessToken, err = client.GetAccessToken(config.ClientId, config.ClientSecret, config.RefreshToken, ch.ProxyURL)
+			}
+
+			if err != nil {
+				handleTokenError(ch, err)
+				return
+			}
+
+			// 更新数据库中的 key 字段，如果状态为3则更新为1
+			updates := map[string]interface{}{
+				"key": accessToken,
+			}
+			if ch.Status == 3 {
+				updates["status"] = 1
+			}
+
+			err = DB.Model(&ch).Updates(updates).Error
+			if err != nil {
+				common.SysError(fmt.Sprintf("更新通道 %d 失败：%v", ch.Id, err.Error()))
+				return
+			}
+
+			if ch.Status == 3 {
+				common.SysLog(fmt.Sprintf("成功更新通道 %d 的访问令牌并将状态更新为1", ch.Id))
+			} else {
+				common.SysLog(fmt.Sprintf("成功更新通道 %d 的访问令牌", ch.Id))
+			}
+		}(channel)
+	}
+
+	wg.Wait() // 等待所有goroutine完成
+
+	return nil
+}
+func handleTokenError(ch Channel, err error) {
+	if ch.Status == 1 {
+		updateErr := DB.Model(&ch).Updates(map[string]interface{}{
+			"status": 3,
+		}).Error
+		if updateErr != nil {
+			common.SysError(fmt.Sprintf("更新通道 %d 状态为3失败：%v", ch.Id, updateErr))
+		} else {
+			common.SysError(fmt.Sprintf("由于获取令牌失败，通道 %d 的状态已更新为3", ch.Id))
+		}
+	}
+	common.SysError(fmt.Sprintf("获取通道 %d 的访问令牌失败：%v", ch.Id, err))
+}
+
+func GetTaggedChannels() ([]*Channel, error) {
+	var channels []*Channel
+	// 查询所有有标签的渠道
+	err := DB.Select("id, type, status, name, weight, created_time, test_time, response_time, balance, balance_updated_time, models, `group`, tags, used_quota, used_count, priority, auto_ban, tested_time, model_test, rate_limited").
+		Where("tags IS NOT NULL AND tags != ''").
+		Order("id desc").
+		Find(&channels).Error
+	return channels, err
+}
+
+func GetUntaggedChannels(startIdx int, num int) ([]*Channel, error) {
+	var channels []*Channel
+	// 查询所有没有标签的渠道，并进行分页
+	err := DB.Select("id, type, status, name, weight, created_time, test_time, response_time, balance, balance_updated_time, models, `group`, tags, used_quota, used_count, priority, auto_ban, tested_time, model_test, rate_limited").
+		Where("tags IS NULL OR tags = ''").
+		Order("id desc").
+		Limit(num).
+		Offset(startIdx).
+		Find(&channels).Error
+	return channels, err
+}
+
+func GetUntaggedChannelsCount() (int64, error) {
+	var count int64
+	err := DB.Model(&Channel{}).
+		Where("tags IS NULL OR tags = ''").
+		Count(&count).Error
+	return count, err
 }

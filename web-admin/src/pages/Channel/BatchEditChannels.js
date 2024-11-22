@@ -3,7 +3,7 @@ import {useNavigate, useParams} from 'react-router-dom';
 import {API, isMobile, showError, showInfo, showSuccess, verifyJSON} from '../../helpers';
 import {CHANNEL_OPTIONS} from '../../constants';
 import Title from "@douyinfe/semi-ui/lib/es/typography/title";
-import {SideSheet, Space, Spin, Button, Input, Typography, Select, TextArea, Checkbox, Banner,AutoComplete} from "@douyinfe/semi-ui";
+import {SideSheet, Space, Spin, Button, Input,TagInput, Typography, Select, TextArea, Checkbox, Banner,AutoComplete} from "@douyinfe/semi-ui";
 
 const MODEL_MAPPING_EXAMPLE = {
     'gpt-3.5-turbo-0301': 'gpt-3.5-turbo',
@@ -11,8 +11,19 @@ const MODEL_MAPPING_EXAMPLE = {
     'gpt-4-32k-0314': 'gpt-4-32k'
 };
 
+const STATUS_CODE_MAPPING_EXAMPLE = {
+    '400': '500',
+  };
 
-
+const DEFAULT_GEMINI_MODELS = [
+    'gemini-1.5-pro-002',
+    'gemini-1.5-flash-002',
+    'gemini-1.5-pro-latest',
+    'gemini-1.5-flash-latest',
+    'gemini-1.5-pro-exp-0801',
+    'gemini-1.5-pro-exp-0827',
+    'gemini-1.5-flash-exp-0827'
+];
 const BatchEditChannels = (props) => {
     
     const {
@@ -28,6 +39,7 @@ const BatchEditChannels = (props) => {
     const originInputs = {
         openai_organization: '',
         model_mapping: '',
+        status_code_mapping: '',
         headers: '',
         models: [],
         auto_ban: 1,
@@ -36,8 +48,13 @@ const BatchEditChannels = (props) => {
         tested_time:'',
         priority:'',
         weight:'',
-        groups: ['default']
+        groups: ['default'],
+        gemini_model: '',
+        tags: '',
     };
+    const [config, setConfig] = useState({
+        gemini_model: '',
+      });
     // const [autoBan, setAutoBan] = useState(true);
     const [inputs, setInputs] = useState(originInputs);
     const [originModelOptions, setOriginModelOptions] = useState([]);
@@ -53,8 +70,10 @@ const BatchEditChannels = (props) => {
     const [loading, setLoading] = useState(false);
     const [autoBan, setAutoBan] = useState(true);
     const [rateLimited, setRateLimited] = useState(false);
+    const [rateLimitedConut, setRateLimitedConut] = useState(0);
     const [priority, setPriority] = useState(0);
     const [modelTest, setModelTest] = useState('gpt-3.5-turbo');
+    const [claudeoriginalrequest, setClaudeOriginalRequest] = useState(false);
     const handleInputChange = (name, value) => {
         setInputs((inputs) => ({...inputs, [name]: value}));
         if (name === 'type' && inputs.models.length === 0) {
@@ -67,16 +86,28 @@ const BatchEditChannels = (props) => {
 
     const fetchModels = async () => {
         try {
-            let res = await API.get(`/api/channel/models`);
-            let localModelOptions = res.data.data.map((model) => ({
-                label: model.id,
-                value: model.id
+            let res = await API.get(`/api/channel/models`);    
+            const groupedModels = res.data.data.reduce((acc, model) => {
+                if (!acc[model.owned_by]) {
+                    acc[model.owned_by] = [];
+                }
+                acc[model.owned_by].push({ label: model.id, value: model.id });
+                return acc;
+            }, {});
+    
+            const localModelOptions = Object.entries(groupedModels).map(([owner, models]) => ({
+                label: owner,
+                options: models,
             }));
+    
             setOriginModelOptions(localModelOptions);
+    
             setFullModels(res.data.data.map((model) => model.id));
-            setBasicModels(res.data.data.filter((model) => {
-                return model.id.startsWith('gpt-3') || model.id.startsWith('gpt-4') || model.id.startsWith('text-');
-            }).map((model) => model.id));
+    
+            setBasicModels(res.data.data
+                .filter((model) => model.id.startsWith('gpt-3') || model.id.startsWith('gpt-4') || model.id.startsWith('text-'))
+                .map((model) => model.id)
+            );
         } catch (error) {
             showError(error.message);
         }
@@ -94,9 +125,35 @@ const BatchEditChannels = (props) => {
         }
     };
 
+    const handleGeminiModelChange = (value) => {
+        setConfig(prevConfig => ({
+            ...prevConfig,
+            gemini_model: Array.isArray(value) ? value.join(',') : value
+        }));
+    };
+
+    const resetGeminiModels = () => {
+        setConfig(prevConfig => ({
+            ...prevConfig,
+            gemini_model: DEFAULT_GEMINI_MODELS.join(',')
+        }));
+    };
+
     useEffect(() => {
         setModelOptions(originModelOptions);
     }, [originModelOptions]);
+
+    useEffect(() => {
+        if (inputs.type === 24) {
+            setConfig(prevConfig => {
+                const geminiModel = prevConfig.gemini_model || DEFAULT_GEMINI_MODELS.join(',');
+                return {
+                    ...prevConfig,
+                    gemini_model: geminiModel
+                };
+            });
+        }
+    }, [inputs.type]);
 
     useEffect(() => {
         // 当editingChannelIds改变时，获取第一个channelId的信息，并设置到表单
@@ -130,6 +187,9 @@ const BatchEditChannels = (props) => {
                 if (data.model_mapping !== undefined) {
                     newData.model_mapping = data.model_mapping === '' ? '' : JSON.stringify(JSON.parse(data.model_mapping), null, 2);
                 }
+                if (data.status_code_mapping !== undefined) {
+                    newData.status_code_mapping = data.status_code_mapping === '' ? '' : JSON.stringify(JSON.parse(data.status_code_mapping), null, 2);
+                }
                 if (data.headers !== undefined) {
                     newData.headers = data.headers === '' ? '' : JSON.stringify(JSON.parse(data.headers), null, 2);
                 }
@@ -161,11 +221,31 @@ const BatchEditChannels = (props) => {
                     newData.is_tools = data.is_tools;
                     setIstools(data.is_tools);
                 }
+                if (data.claude_original_request !== undefined) {
+                    newData.claude_original_request = data.claude_original_request;
+                    setClaudeOriginalRequest(data.claude_original_request);
+                }
                 if (data.model_test !== undefined) {
                     newData.model_test = data.model_test;
                     setModelTest(data.model_test);
                 }
-    
+                if (data.rate_limit_count !== undefined) {
+                    newData.rate_limit_count = data.rate_limit_count;
+                    setRateLimitedConut(data.rate_limit_count);
+                }
+                if (data.config !== '') {
+                    try {
+                        const parsedConfig = JSON.parse(data.config);
+                        setConfig(prevConfig => ({
+                            ...prevConfig,
+                            ...parsedConfig,
+                            // 如果 parsedConfig 中没有 gemini_model，保留之前的值或使用默认值
+                            gemini_model: parsedConfig.gemini_model || prevConfig.gemini_model || DEFAULT_GEMINI_MODELS.join(',')
+                        }));
+                    } catch (error) {
+                        console.error("Error parsing config:", error);
+                    }
+                }
                 // 更新状态
                 setInputs(inputs => ({ ...inputs, ...newData }));
             } else {
@@ -190,9 +270,17 @@ const BatchEditChannels = (props) => {
             showInfo('模型映射必须是合法的 JSON 格式！');
             return;
         }
-        if (inputs.headers !== '' && !verifyJSON(inputs.headers)) {
-            showInfo('模型映射必须是合法的 JSON 格式！');
+        if (inputs.status_code_mapping !== '' && !verifyJSON(inputs.status_code_mapping)) {
+            showInfo('状态码复写必须是合法的 JSON 格式！');
             return;
+        }
+        if (inputs.headers !== '' && !verifyJSON(inputs.headers)) {
+            showInfo('请求头必须是合法的 JSON 格式！');
+            return;
+        }
+        let updatedConfig = {...config};
+        if (inputs.type === 24) {
+            updatedConfig.gemini_model = config.gemini_model;
         }
         let localInputs = {...inputs};
          // 将 autoBan 状态转换为对应的整数值并添加到 localInputs 中
@@ -203,7 +291,8 @@ const BatchEditChannels = (props) => {
         localInputs.rate_limited = rateLimited;
         localInputs.is_tools = istools;
         localInputs.is_image_url_enabled = isimageurenabled ? 1 : 0;
-        
+        localInputs.claude_original_request = claudeoriginalrequest;
+        localInputs.rate_limit_count = rateLimitedConut;
         if (localInputs.base_url && localInputs.base_url.endsWith('/')) {
             localInputs.base_url = localInputs.base_url.slice(0, localInputs.base_url.length - 1);
         }
@@ -217,7 +306,7 @@ const BatchEditChannels = (props) => {
         if (!localInputs.model_test) {
             localInputs.model_test = 'gpt-3.5-turbo';
         }
-
+        localInputs.config = JSON.stringify(updatedConfig);
         localInputs.models = localInputs.models.join(',');
         localInputs.group = localInputs.groups.join(',');
     
@@ -281,6 +370,19 @@ const BatchEditChannels = (props) => {
                 width={isMobile() ? '100%' : 600}
             >
                 <Spin spinning={loading}>
+                     <div style={{marginTop: 10}}>
+                         <Typography.Text strong>标签：</Typography.Text>
+                     </div>
+                     <Input
+                         label='标签'
+                         name='tags'
+                         placeholder={'请输入标签名称'}
+                         onChange={value => {
+                             handleInputChange('tags', value)
+                         }}
+                         value={inputs.tags}
+                     autoComplete='new-password'
+                     />
                     <div style={{marginTop: 10}}>
                         <Typography.Text strong>类型：</Typography.Text>
                     </div>
@@ -356,6 +458,33 @@ const BatchEditChannels = (props) => {
                         optionList={groupOptions}
                     />
                     {
+                        inputs.type === 24 && (
+                            <>
+                                <div style={{marginTop: 10}}>
+                                    <Typography.Text strong>模型版本：</Typography.Text>
+                                </div>
+                                <TagInput
+                                    style={{ width: '100%', marginTop: '10px' }}
+                                    placeholder='请输入需要v1beta的模型，按回车添加'
+                                    value={(config.gemini_model || DEFAULT_GEMINI_MODELS.join(',')).split(',').filter(Boolean)}
+                                    onChange={handleGeminiModelChange}
+                                    onInputConfirm={(text) => {
+                                        const currentModels = (config.gemini_model || '').split(',').filter(Boolean);
+                                        if (!currentModels.includes(text)) {
+                                            handleGeminiModelChange([...currentModels, text]);
+                                        }
+                                    }}
+                                />
+                                <Button 
+                                    style={{ marginTop: '10px' }}
+                                    onClick={resetGeminiModels}
+                                >
+                                    重置为默认模型
+                                </Button>
+                            </>
+                        )
+                    }
+                    {
                         inputs.type === 18 && (
                             <>
                                 <div style={{marginTop: 10}}>
@@ -414,41 +543,51 @@ const BatchEditChannels = (props) => {
                         <Typography.Text strong>模型：</Typography.Text>
                     </div>
                     <Select
-                        placeholder={'请选择该渠道所支持的模型'}
-                        name='models'
-                        required
-                        multiple
-                        selection
-                        onChange={value => {
-                            handleInputChange('models', value)
+                    placeholder={'请选择该渠道所支持的模型'}
+                    name='models'
+                    required
+                    multiple
+                    selection
+                    onChange={value => {
+                        handleInputChange('models', value)
+                    }}
+                    value={inputs.models}
+                    autoComplete='new-password'
+                    style={{ width: '100%' }}
+                >
+                    {modelOptions.map(group => (
+                        <Select.OptGroup key={group.label} label={group.label}>
+                            {group.options.map(model => (
+                                <Select.Option key={model.value} value={model.value}>
+                                    {model.label}
+                                </Select.Option>
+                            ))}
+                        </Select.OptGroup>
+                    ))}
+                </Select>
+                <div style={{lineHeight: '40px', marginBottom: '12px'}}>
+                    <Space>
+                        <Button type='primary' onClick={() => {
+                            handleInputChange('models', basicModels);
+                        }}>填入基础模型</Button>
+                        <Button type='secondary' onClick={() => {
+                            handleInputChange('models', fullModels);
+                        }}>填入所有模型</Button>
+                        <Button type='warning' onClick={() => {
+                            handleInputChange('models', []);
+                        }}>清除所有模型</Button>
+                    </Space>
+                    <Input
+                        addonAfter={
+                            <Button type='primary' onClick={addCustomModel}>填入</Button>
+                        }
+                        placeholder='输入自定义模型名称'
+                        value={customModel}
+                        onChange={(value) => {
+                            setCustomModel(value);
                         }}
-                        value={inputs.models}
-                        autoComplete='new-password'
-                        optionList={modelOptions}
                     />
-                    <div style={{lineHeight: '40px', marginBottom: '12px'}}>
-                        <Space>
-                            <Button type='primary' onClick={() => {
-                                handleInputChange('models', basicModels);
-                            }}>填入基础模型</Button>
-                            <Button type='secondary' onClick={() => {
-                                handleInputChange('models', fullModels);
-                            }}>填入所有模型</Button>
-                            <Button type='warning' onClick={() => {
-                                handleInputChange('models', []);
-                            }}>清除所有模型</Button>
-                        </Space>
-                        <Input
-                            addonAfter={
-                                <Button type='primary' onClick={addCustomModel}>填入</Button>
-                            }
-                            placeholder='输入自定义模型名称'
-                            value={customModel}
-                            onChange={(value) => {
-                                setCustomModel(value);
-                            }}
-                        />
-                    </div>
+                </div>
                     <div style={{marginTop: 10}}>
                         <Typography.Text strong>模型重定向：</Typography.Text>
                     </div>
@@ -473,7 +612,36 @@ const BatchEditChannels = (props) => {
                     }>
                         填入模板
                     </Typography.Text>
-
+                    <div style={{ marginTop: 10 }}>
+                        <Typography.Text strong>
+                        状态码复写（仅影响本地判断，不修改返回到上游的状态码）：
+                        </Typography.Text>
+                    </div>
+                    <TextArea
+                        placeholder={`此项可选，用于复写返回的状态码，比如将claude渠道的400错误复写为500（用于重试），请勿滥用该功能，例如：\n${JSON.stringify(STATUS_CODE_MAPPING_EXAMPLE, null, 2)}`}
+                        name='status_code_mapping'
+                        onChange={(value) => {
+                        handleInputChange('status_code_mapping', value);
+                        }}
+                        autosize
+                        value={inputs.status_code_mapping}
+                        autoComplete='new-password'
+                    />
+                    <Typography.Text
+                        style={{
+                        color: 'rgba(var(--semi-blue-5), 1)',
+                        userSelect: 'none',
+                        cursor: 'pointer',
+                        }}
+                        onClick={() => {
+                        handleInputChange(
+                            'status_code_mapping',
+                            JSON.stringify(STATUS_CODE_MAPPING_EXAMPLE, null, 2),
+                        );
+                        }}
+                    >
+                        填入模板
+                    </Typography.Text>
                     <div style={{marginTop: 10, display: 'flex'}}>
                         <Space>
                             <Checkbox
@@ -492,8 +660,19 @@ const BatchEditChannels = (props) => {
                                 checked={rateLimited}
                                 onChange={() => setRateLimited(!rateLimited)}
                             />
-                            <Typography.Text strong>启用频率限制（开启后渠道每分钟限制三次）</Typography.Text>
+                            <Typography.Text strong>启用频率限制（每分钟限制）</Typography.Text>
                         </Space>
+                        <div >
+                            <AutoComplete
+                                style={{ width: '100%', marginTop: 8 }}
+                                placeholder={'延迟时间-毫秒'}
+                                onChange={(value) => setRateLimitedConut(Number(value))}
+                                onSelect={(value) => setRateLimitedConut(Number(value))}
+                                value={String(rateLimitedConut)} 
+                                autoComplete='off'
+                                type='number'
+                            />
+                        </div>
                     </div>
                     <div style={{marginTop: 10, display: 'flex'}}>
                         <Space>
@@ -504,6 +683,19 @@ const BatchEditChannels = (props) => {
                             <Typography.Text strong>是否支持FC插件</Typography.Text>
                         </Space>
                     </div>
+                    {
+                        ((inputs.type === 42) || (inputs.type === 14)) && (
+                            <div style={{marginTop: 10, display: 'flex'}}>
+                                <Space>
+                                    <Checkbox
+                                        checked={claudeoriginalrequest}
+                                        onChange={() => setClaudeOriginalRequest(!claudeoriginalrequest)}
+                                    />
+                                    <Typography.Text strong>支持原始Claude请求</Typography.Text>
+                                </Space>
+                            </div>
+                        )
+                    }
                     {
                         inputs.type === 2 && (
                             <div style={{marginTop: 10, display: 'flex'}}>
@@ -517,6 +709,7 @@ const BatchEditChannels = (props) => {
                             </div>
                         )
                     }
+
 
                     <div style={{marginTop: 20, display: 'flex', alignItems: 'center'}}>
                         <div style={{flex: 1}}>

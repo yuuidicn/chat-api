@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"one-api/common"
 	"one-api/common/config"
@@ -47,7 +46,6 @@ func RelayAudioHelper(c *gin.Context, relayMode int) *dbmodel.ErrorWithStatusCod
 			Model: "whisper-1",
 		}
 	}
-	//err := common.UnmarshalBodyReusable(c, &audioRequest)
 
 	// request validation
 	if audioRequest.Model == "" {
@@ -68,40 +66,19 @@ func RelayAudioHelper(c *gin.Context, relayMode int) *dbmodel.ErrorWithStatusCod
 	groupRatio := common.GetGroupRatio(meta.Group)
 	ratio := modelRatio * groupRatio
 	preConsumedQuota := 0
-	token, err := model.GetTokenById(meta.TokenId)
-	if err != nil {
-		log.Println("获取token出错:", err)
-	}
 
 	BillingByRequestEnabled, _ := strconv.ParseBool(config.OptionMap["BillingByRequestEnabled"])
 	ModelRatioEnabled, _ := strconv.ParseBool(config.OptionMap["ModelRatioEnabled"])
-
-	if BillingByRequestEnabled && ModelRatioEnabled {
-		if token.BillingEnabled {
-			if token.BillingEnabled {
-				modelRatio2, ok := common.GetModelRatio2(audioRequest.Model)
-				if !ok {
-					preConsumedQuota = int(float64(preConsumedTokens) * ratio)
-				} else {
-					ratio = modelRatio2 * groupRatio
-					preConsumedQuota = int(ratio * config.QuotaPerUnit)
-				}
-			} else {
-				preConsumedQuota = int(float64(preConsumedTokens) * ratio)
+	preConsumedQuota = int(float64(preConsumedTokens) * ratio)
+	if BillingByRequestEnabled {
+		shouldUseModelRatio2 := !ModelRatioEnabled || (ModelRatioEnabled && meta.BillingEnabled)
+		if shouldUseModelRatio2 {
+			modelRatio2, ok := common.GetModelRatio2(audioRequest.Model)
+			if ok {
+				ratio = modelRatio2 * groupRatio
+				preConsumedQuota = int(ratio * config.QuotaPerUnit)
 			}
-		} else {
-			preConsumedQuota = int(float64(preConsumedTokens) * ratio)
 		}
-	} else if BillingByRequestEnabled {
-		modelRatio2, ok := common.GetModelRatio2(audioRequest.Model)
-		if !ok {
-			preConsumedQuota = int(float64(preConsumedTokens) * ratio)
-		} else {
-			ratio = modelRatio2 * groupRatio
-			preConsumedQuota = int(ratio * config.QuotaPerUnit)
-		}
-	} else {
-		preConsumedQuota = int(float64(preConsumedTokens) * ratio)
 	}
 
 	userQuota, err := model.CacheGetUserQuota(c, meta.UserId)
@@ -111,7 +88,7 @@ func RelayAudioHelper(c *gin.Context, relayMode int) *dbmodel.ErrorWithStatusCod
 	if userQuota-preConsumedQuota < 0 {
 		return openai.ErrorWrapper(errors.New("user quota is not enough"), "insufficient_user_quota", http.StatusForbidden)
 	}
-	err = model.CacheDecreaseUserQuota(meta.UserId, preConsumedQuota)
+	err = model.CacheDecreaseUserQuota(c.Request.Context(), meta.UserId, preConsumedQuota)
 	if err != nil {
 		return openai.ErrorWrapper(err, "decrease_user_quota_failed", http.StatusInternalServerError)
 	}
@@ -148,7 +125,7 @@ func RelayAudioHelper(c *gin.Context, relayMode int) *dbmodel.ErrorWithStatusCod
 	}
 	fullRequestURL := util.GetFullRequestURL(baseURL, requestURL, meta.ChannelType)
 	if meta.ChannelType == common.ChannelTypeAzure {
-		apiVersion := meta.APIVersion
+		apiVersion := meta.Config.APIVersion
 		if relayMode == constant.RelayModeAudioTranscription {
 			// https://learn.microsoft.com/en-us/azure/ai-services/openai/whisper-quickstart?tabs=command-line#rest-api
 			fullRequestURL = fmt.Sprintf("%s/openai/deployments/%s/audio/transcriptions?api-version=%s", baseURL, audioRequest.Model, apiVersion)
@@ -209,35 +186,19 @@ func RelayAudioHelper(c *gin.Context, relayMode int) *dbmodel.ErrorWithStatusCod
 				promptTokens = quota
 			}
 			modelRatioString := ""
-
-			if BillingByRequestEnabled && ModelRatioEnabled {
-				if token.BillingEnabled {
-					modelRatio2, ok := common.GetModelRatio2(audioRequest.Model)
-					if !ok {
-						quota = int(float64(quota) * ratio)
-						modelRatioString = fmt.Sprintf("模型倍率 %.2f", modelRatio)
-					} else {
+			quota = int(float64(quota) * ratio)
+			modelRatioString = fmt.Sprintf("模型倍率 %.2f", modelRatio)
+			if BillingByRequestEnabled {
+				shouldUseModelRatio2 := !ModelRatioEnabled || (ModelRatioEnabled && meta.BillingEnabled)
+				if shouldUseModelRatio2 {
+					modelRatio2, ok := common.GetModelRatio2(meta.OriginModelName)
+					if ok {
 						ratio = modelRatio2 * groupRatio
 						quota = int(ratio * config.QuotaPerUnit)
 						modelRatioString = "按次计费"
+
 					}
-				} else {
-					quota = int(float64(quota) * ratio)
-					modelRatioString = fmt.Sprintf("模型倍率 %.2f", modelRatio)
 				}
-			} else if BillingByRequestEnabled {
-				modelRatio2, ok := common.GetModelRatio2(audioRequest.Model)
-				if !ok {
-					quota = int(float64(quota) * ratio)
-					modelRatioString = fmt.Sprintf("模型倍率 %.2f", modelRatio)
-				} else {
-					ratio = modelRatio2 * groupRatio
-					quota = int(ratio * config.QuotaPerUnit)
-					modelRatioString = "按次计费"
-				}
-			} else {
-				quota = int(float64(quota) * ratio)
-				modelRatioString = fmt.Sprintf("模型倍率 %.2f", modelRatio)
 			}
 
 			if ratio != 0 && quota <= 0 {
@@ -248,7 +209,7 @@ func RelayAudioHelper(c *gin.Context, relayMode int) *dbmodel.ErrorWithStatusCod
 			if err != nil {
 				common.SysError("error consuming token remain quota: " + err.Error())
 			}
-			err = model.CacheDecreaseUserQuota(meta.UserId, quotaDelta)
+			err = model.CacheDecreaseUserQuota(ctx, meta.UserId, quotaDelta)
 			if err != nil {
 				logger.Error(ctx, "decrease_user_quota_failed"+err.Error())
 			}
@@ -260,7 +221,7 @@ func RelayAudioHelper(c *gin.Context, relayMode int) *dbmodel.ErrorWithStatusCod
 				tokenName := c.GetString("token_name")
 				multiplier := fmt.Sprintf("%s，分组倍率 %.2f", modelRatioString, groupRatio)
 				logContent := " "
-				model.RecordConsumeLog(ctx, meta.UserId, meta.ChannelId, meta.ChannelName, promptTokens, 0, audioRequest.Model, tokenName, quota, logContent, meta.TokenId, multiplier, userQuota, int(useTimeSeconds), false)
+				model.RecordConsumeLog(ctx, meta.UserId, meta.ChannelId, meta.ChannelName, promptTokens, 0, audioRequest.Model, tokenName, quota, logContent, meta.TokenId, multiplier, userQuota, int(useTimeSeconds), false, meta.AttemptsLog, meta.RelayIp)
 				model.UpdateUserUsedQuotaAndRequestCount(meta.UserId, quota)
 				model.UpdateChannelUsedQuota(meta.ChannelId, quota)
 			}

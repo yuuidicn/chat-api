@@ -40,6 +40,7 @@ type User struct {
 	CreatedAt        int64          `json:"created_at" gorm:"index"`
 	DeletedAt        gorm.DeletedAt `gorm:"index"`
 	LastLoginAt      int64          `json:"last_login_at"`
+	Version          int64          `json:"version" gorm:"type:bigint;default:0"`
 }
 
 type RechargeRecord struct {
@@ -50,6 +51,7 @@ type RechargeRecord struct {
 	EndDate   int64 `json:"end_date"`             // 充值的结束时间
 	CreatedAt int64 `json:"created_at"`           // 创建时间戳
 	UpdatedAt int64 `json:"updated_at"`           // 更新时间戳
+	Version   int64 `json:"version" gorm:"type:bigint;default:0"`
 }
 
 // CheckUserExistOrDeleted check if user exist or deleted, if not exist, return false, nil, if deleted or exist, return true, nil
@@ -622,39 +624,66 @@ func DecreaseUserQuota(id int, quota int) (err error) {
 	return decreaseUserQuota(id, quota)
 }
 
-func decreaseUserQuota(userID int, quotaToDecrease int) (err error) {
-	// 启动事务处理配额减少和辅助表记录更新
-	err = DB.Transaction(func(tx *gorm.DB) error {
-		var records []RechargeRecord
-		err := tx.Where("user_id = ?", userID).Order("end_date ASC").Find(&records).Error
-		if err != nil {
+func decreaseUserQuota(userID int, quotaToDecrease int) error {
+	return DB.Transaction(func(tx *gorm.DB) error {
+		// 1. 获取用户信息，包括当前配额
+		var user User
+		if err := tx.Set("gorm:query_option", "FOR UPDATE").Where("id = ?", userID).First(&user).Error; err != nil {
 			return err
 		}
-		// 更新用户主表中的配额，减去所有记录中减去的总额
+
+		// 2. 检查用户总配额是否足够
+		if user.Quota < quotaToDecrease {
+			return fmt.Errorf("insufficient user quota: available %d, required %d", user.Quota, quotaToDecrease)
+		}
+
+		// 3. 更新用户配额
 		if err := tx.Model(&User{}).Where("id = ?", userID).Update("quota", gorm.Expr("quota - ?", quotaToDecrease)).Error; err != nil {
 			return err
 		}
 
-		// 逐条减去每个记录的配额
-		for _, record := range records {
-			// 只处理剩余额度大于0的记录
-			if record.Amount > 0 {
-				if record.Amount <= quotaToDecrease {
-					record.Amount = 0
-				} else {
-					record.Amount -= quotaToDecrease
-				}
+		// 4. 获取充值记录
+		var records []RechargeRecord
+		if err := tx.Where("user_id = ? AND amount > 0", userID).
+			Order("end_date ASC").
+			Find(&records).Error; err != nil {
+			return err
+		}
 
-				// 更新辅助表中的记录，反映新的剩余额度
-				if err := tx.Save(&record).Error; err != nil {
-					return err
-				}
+		// 如果没有充值记录，直接返回，不进行后续操作
+		if len(records) == 0 {
+			log.Printf("No recharge records found for user %d, quota decreased without updating records", userID)
+			return nil
+		}
+
+		// 5. 更新充值记录
+		remainingDecrease := quotaToDecrease
+		for i := range records {
+			var newAmount int
+			if records[i].Amount <= remainingDecrease {
+				newAmount = 0
+				remainingDecrease -= records[i].Amount
+			} else {
+				newAmount = records[i].Amount - remainingDecrease
+				remainingDecrease = 0
 			}
+
+			if err := tx.Model(&RechargeRecord{}).Where("id = ?", records[i].ID).Update("amount", newAmount).Error; err != nil {
+				return err
+			}
+
+			if remainingDecrease == 0 {
+				break
+			}
+		}
+
+		// 6. 检查是否所有配额都已正确扣除
+		if remainingDecrease > 0 {
+			log.Printf("Quota inconsistency detected for user %d: remaining decrease %d", userID, remainingDecrease)
 		}
 
 		return nil
 	})
-	return err
 }
 
 func GetRootUserEmail() (email string) {
@@ -763,4 +792,15 @@ func UpdateUserQuotaData() {
 			common.SysLog("成功更新用户余额并清理过期充值记录。")
 		}
 	}
+}
+
+func GetRole(id int) int {
+	var role int
+	// 查询用户的角色
+	err := DB.Table("users").Select("role").Where("id = ?", id).Scan(&role).Error
+	if err != nil {
+		log.Printf("Error retrieving role for user %d: %v", id, err)
+		return 0 // 默认角色
+	}
+	return role
 }

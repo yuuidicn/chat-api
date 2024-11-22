@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"one-api/common"
+	"one-api/common/client"
 	"one-api/common/config"
 	"one-api/common/logger"
 	"one-api/model"
@@ -34,7 +35,8 @@ func RelayMidjourneyImage(c *gin.Context) {
 		})
 		return
 	}
-	resp, err := http.Get(midjourneyTask.ImageUrl)
+	resp, err := client.ProxiedHttpGet(midjourneyTask.ImageUrl, config.OutProxyUrl)
+
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "http_get_image_failed",
@@ -270,6 +272,7 @@ func RelayMidjourneySubmit(c *gin.Context, relayMode int) *MidjourneyResponse {
 	group := c.GetString("group")
 	channelId := c.GetInt("channel_id")
 	channelName := c.GetString("channel_name")
+	ip := c.GetString("relayIp")
 	var midjRequest MidjourneyRequest
 	if consumeQuota {
 		err := common.UnmarshalBodyReusable(c, &midjRequest)
@@ -570,7 +573,7 @@ func RelayMidjourneySubmit(c *gin.Context, relayMode int) *MidjourneyResponse {
 			if err != nil {
 				common.SysError("error consuming token remain quota: " + err.Error())
 			}
-			err = model.CacheDecreaseUserQuota(userId, quota)
+			err = model.CacheDecreaseUserQuota(ctx, userId, quota)
 			if err != nil {
 				logger.Error(ctx, "decrease_user_quota_failed"+err.Error())
 			}
@@ -581,7 +584,7 @@ func RelayMidjourneySubmit(c *gin.Context, relayMode int) *MidjourneyResponse {
 			if quota != 0 {
 				tokenName := c.GetString("token_name")
 				multiplier := fmt.Sprintf("模型固定价格 %.2f，分组倍率 %.2f，操作 %s", modelRatio, groupRatio, mjAction)
-				model.RecordConsumeLog(ctx, userId, channelId, channelName, 0, 0, imageModel, tokenName, quota, midjResponse.Result, tokenId, multiplier, userQuota, 0, false)
+				model.RecordConsumeLog(ctx, userId, channelId, channelName, 0, 0, imageModel, tokenName, quota, midjResponse.Result, tokenId, multiplier, userQuota, 0, false, "", ip)
 				model.UpdateUserUsedQuotaAndRequestCount(userId, quota)
 				channelId := c.GetInt("channel_id")
 				model.UpdateChannelUsedQuota(channelId, quota)

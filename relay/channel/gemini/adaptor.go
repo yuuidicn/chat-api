@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"one-api/relay/channel"
 	"one-api/relay/channel/openai"
+	"one-api/relay/constant"
 	"one-api/relay/model"
 	"one-api/relay/util"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -20,22 +22,27 @@ func (a *Adaptor) Init(meta *util.RelayMeta) {
 
 }
 
-var modelVersionMap = map[string]string{
-	"gemini-1.5-pro-latest":   "v1beta",
-	"gemini-1.5-flash-latest": "v1beta",
-	"gemini-ultra":            "v1beta",
-}
-
 func (a *Adaptor) GetRequestURL(meta *util.RelayMeta) (string, error) {
-	version, beta := modelVersionMap[meta.ActualModelName]
-	if !beta {
-		if meta.APIVersion != "" {
-			version = meta.APIVersion
-		} else {
-			version = "v1"
+	version := "v1"
+	action := ""
+
+	// 将 meta.Config.GeminiModel 分割成模型列表
+	geminiModels := strings.Split(meta.Config.GeminiModel, ",")
+
+	// 检查当前模型是否在 GeminiModel 列表中
+	for _, model := range geminiModels {
+		if strings.TrimSpace(model) == meta.ActualModelName {
+			version = "v1beta"
+			break
 		}
 	}
-	action := "generateContent"
+
+	switch meta.Mode {
+	case constant.RelayModeEmbeddings:
+		action = "batchEmbedContents"
+	default:
+		action = "generateContent"
+	}
 	if meta.IsStream {
 		action = "streamGenerateContent?alt=sse"
 	}
@@ -48,11 +55,18 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Request, meta *ut
 	return nil
 }
 
-func (a *Adaptor) ConvertRequest(c *gin.Context, relayMode int, request *model.GeneralOpenAIRequest) (any, error) {
+func (a *Adaptor) ConvertRequest(c *gin.Context, meta *util.RelayMeta, request *model.GeneralOpenAIRequest) (any, error) {
 	if request == nil {
 		return nil, errors.New("request is nil")
 	}
-	return ConvertRequest(*request), nil
+	switch meta.Mode {
+	case constant.RelayModeEmbeddings:
+		geminiEmbeddingRequest := ConvertEmbeddingRequest(*request)
+		return geminiEmbeddingRequest, nil
+	default:
+		geminiRequest := ConvertRequest(*request)
+		return geminiRequest, nil
+	}
 }
 
 func (a *Adaptor) DoRequest(c *gin.Context, meta *util.RelayMeta, requestBody io.Reader) (*http.Response, error) {
@@ -72,7 +86,13 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, meta *util.Rel
 		aitext = responseText
 		usage = openai.ResponseText2Usage(responseText, meta.ActualModelName, meta.PromptTokens)
 	} else {
-		err, usage, aitext = Handler(c, resp, meta.PromptTokens, meta.ActualModelName)
+
+		switch meta.Mode {
+		case constant.RelayModeEmbeddings:
+			err, usage = EmbeddingHandler(c, resp)
+		default:
+			err, usage, aitext = Handler(c, resp, meta.PromptTokens, meta.ActualModelName)
+		}
 	}
 	return
 }

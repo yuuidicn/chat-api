@@ -24,6 +24,15 @@ func ShouldDisableChannel(err *relaymodel.Error, statusCode int) bool {
 	if statusCode == http.StatusUnauthorized {
 		return true
 	}
+	if statusCode == http.StatusBadGateway {
+		return true
+	}
+	if statusCode == http.StatusNotAcceptable {
+		return true
+	}
+	if statusCode == http.StatusNotFound {
+		return true
+	}
 	if statusCode == http.StatusPreconditionRequired {
 		return true
 	}
@@ -49,6 +58,9 @@ func ShouldDisableChannel(err *relaymodel.Error, statusCode int) bool {
 	//if strings.Contains(err.Message, "quota") {
 	//	return true
 	//}
+	if strings.Contains(err.Message, "ValidationException: Operation not allowed") {
+		return true
+	}
 	if strings.Contains(err.Message, "用户已被封禁") {
 		return true
 	}
@@ -190,4 +202,24 @@ func GetAzureAPIVersion(c *gin.Context) string {
 		apiVersion = c.GetString(common.ConfigKeyAPIVersion)
 	}
 	return apiVersion
+}
+
+func ResetStatusCode(openaiErr *relaymodel.ErrorWithStatusCode, statusCodeMappingStr string) {
+	if statusCodeMappingStr == "" || statusCodeMappingStr == "{}" {
+		return
+	}
+	statusCodeMapping := make(map[string]string)
+	err := json.Unmarshal([]byte(statusCodeMappingStr), &statusCodeMapping)
+	if err != nil {
+		return
+	}
+	if openaiErr.StatusCode == http.StatusOK {
+		return
+	}
+
+	codeStr := strconv.Itoa(openaiErr.StatusCode)
+	if _, ok := statusCodeMapping[codeStr]; ok {
+		intCode, _ := strconv.Atoi(statusCodeMapping[codeStr])
+		openaiErr.StatusCode = intCode
+	}
 }

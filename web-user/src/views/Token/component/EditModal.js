@@ -18,8 +18,9 @@ import {
   OutlinedInput,
   InputAdornment,
   Switch,
-  FormHelperText,TextField,Select, MenuItem,Chip,Checkbox,ListItemText
+  FormHelperText,TextField,Select, MenuItem,Chip,Checkbox,ListItemText,Box
 } from '@mui/material';
+import CloseIcon from '@mui/icons-material/Close';
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { DateTimePicker } from '@mui/x-date-pickers/DateTimePicker';
@@ -39,6 +40,7 @@ const validationSchema = Yup.object().shape({
   unlimited_quota: Yup.boolean(),
   billing_enabled: Yup.boolean(),
   models: Yup.array().of(Yup.string()),
+  group: Yup.string(),
 });
 
 const originInputs = {
@@ -49,7 +51,8 @@ const originInputs = {
   remain_quota: 1,
   expired_time: -1,
   unlimited_quota: false,
-  billing_enabled:false
+  billing_enabled:false,
+  group: '',
 };
 
 const EditModal = ({ open, tokenId, onCancel, onOk }) => {
@@ -57,8 +60,10 @@ const EditModal = ({ open, tokenId, onCancel, onOk }) => {
   const [inputs, setInputs] = useState(originInputs);
   const [modelRatioEnabled, setModelRatioEnabled] = useState('');
   const [billingByRequestEnabled, setBillingByRequestEnabled] = useState('');
+  const [userGroupEnabled, setUserGroupEnabled] = useState('');
   const [options, setOptions] = useState({});
   const [models, setModels] = useState([]);
+  const [groups, setGroups] = useState([]);
   let quotaPerUnit = localStorage.getItem('quota_per_unit');
   const generateRandomSuffix = () => {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -136,6 +141,20 @@ const EditModal = ({ open, tokenId, onCancel, onOk }) => {
     }
   };
 
+  const loadGroups = async () => {
+    try {
+        let res = await API.get('/api/user/group');
+        const { success, message, data } = res.data;
+        if (success) {
+            setGroups(data);
+        } else {
+            showError(message);
+        }
+    } catch (err) {
+        showError(err.message);
+    }
+  };
+
   const [batchAddCount, setBatchAddCount] = useState(1);
 
   const handleBatchAddChange = (event) => {
@@ -153,7 +172,8 @@ const EditModal = ({ open, tokenId, onCancel, onOk }) => {
       setInputs({
         ...data,
         remain_quota: parseFloat(data.remain_quota)/quotaPerUnit, 
-        models: data.models ? data.models.split(',') : [] 
+        models: data.models ? data.models.split(',') : [] ,
+        group: data.group || '' 
       });
     } else {
       showError(message);
@@ -171,6 +191,7 @@ const EditModal = ({ open, tokenId, onCancel, onOk }) => {
     }
     loadModels();
     getOptions();
+    loadGroups();
   }, [tokenId]);
 
   useEffect(() => {
@@ -200,6 +221,9 @@ const EditModal = ({ open, tokenId, onCancel, onOk }) => {
     }
     if (options.BillingByRequestEnabled) { 
       setBillingByRequestEnabled(options.BillingByRequestEnabled === 'true');
+    }
+    if (options.UserGroupEnabled) { 
+      setUserGroupEnabled(options.UserGroupEnabled === 'true');
     }
   }, [options]);
 
@@ -307,51 +331,78 @@ const EditModal = ({ open, tokenId, onCancel, onOk }) => {
               />{' '}
               无限额度
               <FormControl fullWidth sx={{ ...theme.typography.otherInput, mt: 2 }}>
-
               <InputLabel htmlFor="models-multiple-select">可用模型</InputLabel>
-                <Select
-                  labelId="models-multiple-label"
-                  id="models-multiple-select"
-                  multiple
-                  value={values.models}
-                  onChange={(event) => {
-                    setFieldValue('models', event.target.value);
-                  }}
-                  renderValue={(selected) => (
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px' }}>
-                      {selected.map((value) => (
-                        <Chip
-                          key={value}
-                          label={value}
-                          // 添加 margin 来解决标签之间的间距问题
-                          style={{ margin: '1px' }}
-                        />
-                      ))}
-                    </div>
-                  )}
-                  MenuProps={{
-                    PaperProps: {
-                      style: {
-                        maxHeight: 48 * 4.5 + 8,
-                        width: 250,
-                      },
-                    },
-                  }}
-                >
-                  {models.map((model) => (
-            <MenuItem key={model} value={model}>
-              <Checkbox checked={values.models.indexOf(model) > -1} />
-              <ListItemText primary={model} />
-            </MenuItem>
-          ))}
-                </Select>
-                <FormHelperText>选择令牌可以使用的模型，为空表示全部可用。</FormHelperText>
-                {touched.models && errors.models && (
-                  <FormHelperText error id="helper-text-models">
-                    {errors.models}
-                  </FormHelperText>
+              <Select
+                labelId="models-multiple-label"
+                id="models-multiple-select"
+                multiple
+                value={values.models}
+                onChange={(event) => {
+                  setFieldValue('models', event.target.value);
+                }}
+                renderValue={(selected) => (
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                    {selected.map((value) => (
+                      <Chip
+                        key={value}
+                        label={value}
+                        onDelete={() => {
+                          const newSelected = values.models.filter(model => model !== value);
+                          setFieldValue('models', newSelected);
+                        }}
+                        deleteIcon={
+                          <CloseIcon
+                            onMouseDown={(event) => event.stopPropagation()}
+                          />
+                        }
+                      />
+                    ))}
+                  </Box>
                 )}
-              </FormControl>
+                MenuProps={{
+                  PaperProps: {
+                    style: {
+                      maxHeight: 48 * 4.5 + 8,
+                      width: 250,
+                    },
+                  },
+                }}
+              >
+                {models.map((model) => (
+                  <MenuItem key={model} value={model}>
+                    <Checkbox checked={values.models.indexOf(model) > -1} />
+                    <ListItemText primary={model} />
+                  </MenuItem>
+                ))}
+              </Select>
+              <FormHelperText>选择令牌可以使用的模型，为空表示全部可用。点击模型旁的 x 可直接删除。</FormHelperText>
+              {touched.models && errors.models && (
+                <FormHelperText error id="helper-text-models">
+                  {errors.models}
+                </FormHelperText>
+              )}
+            </FormControl>
+              {userGroupEnabled && (
+                <FormControl fullWidth sx={{ ...theme.typography.otherInput, mt: 2 }}>
+                  <InputLabel id="group-select-label">分组</InputLabel>
+                  <Select
+                    labelId="group-select-label"
+                    id="group-select"
+                    value={values.group}
+                    onChange={(event) => {
+                      setFieldValue('group', event.target.value);
+                    }}
+                  >
+                    {groups.map((group) => (
+                      <MenuItem key={group.key} value={group.key}>
+                        {group.value}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                  <FormHelperText>特殊渠道专用，正常使用不需要选择</FormHelperText>
+                </FormControl>
+              )}
+
 
               {/* 新增的计费方式选择框 */}
               {tokenId ? null : (

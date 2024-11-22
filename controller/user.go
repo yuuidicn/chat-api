@@ -329,13 +329,10 @@ func GenerateAccessToken(c *gin.Context) {
 
 func GetUserDashboard(c *gin.Context) {
 	id := c.GetInt("id")
-	// 获取7天前 00:00:00 和 今天23:59:59  的秒时间戳
-	now := time.Now()
-	toDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	endOfDay := toDay.Add(time.Hour * 24).Add(-time.Second).Unix()
-	startOfDay := toDay.AddDate(0, 0, -7).Unix()
+	startTimestamp, _ := strconv.ParseInt(c.Query("start"), 10, 64)
+	endTimestamp, _ := strconv.ParseInt(c.Query("end"), 10, 64)
 
-	dashboards, err := model.SearchLogsByDayAndModel(id, int(startOfDay), int(endOfDay))
+	dashboards, err := model.SearchLogsByDayAndModel(id, startTimestamp, endTimestamp)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
@@ -508,25 +505,25 @@ func GetUserModels(c *gin.Context) {
 func GetUserModelsBilling(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		// 如果无法将参数转换为整数，则尝试从上下文中获取整数类型的ID
 		id = c.GetInt("id")
 	}
 
-	// 假设 model.GetUserById 函数会根据提供的ID获取用户信息
 	user, err := model.GetUserById(id, true)
 	if err != nil {
-		// 如果发生错误，返回错误信息
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
 			"message": err.Error(),
 		})
 		return
 	}
+	group := c.Query("group")
+	if group == "" {
+		group = user.Group
+	}
+	search := c.Query("search")
 
-	// 获取用户所在组的模型及其计费信息
-	models, err := model.GetGroupModelsBilling(user.Group)
+	models, err := model.GetGroupModelsBilling(group, search)
 	if err != nil {
-		// 如果发生错误，返回错误信息
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
 			"message": err.Error(),
@@ -534,13 +531,16 @@ func GetUserModelsBilling(c *gin.Context) {
 		return
 	}
 
-	// 成功获取数据后，返回JSON响应
+	// 在这里获取模型类型
+	for i := range models {
+		models[i].ModelType = getModelType(models[i].Model)
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data":    models, // 注意这里直接返回models切片，它包含了模型名称及计费信息
+		"data":    models,
 	})
-	return
 }
 
 func UpdateUser(c *gin.Context) {

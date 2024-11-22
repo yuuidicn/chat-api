@@ -139,7 +139,10 @@ func TokenAuth() func(c *gin.Context) {
 		} else if key == "midjourney-proxy" {
 			key, parts = processAuthHeader(c.Request.Header.Get("mj-api-secret"))
 		}
-
+		c.Set("claude_original_request", false)
+		if c.Request.URL.Path == "/v1/messages" {
+			c.Set("claude_original_request", true)
+		}
 		modelRequest := ModelRequest{Model: getModelForPath(c.Request.URL.Path)}
 		if !strings.HasPrefix(c.Request.URL.Path, "/v1/audio/transcriptions") && c.Request.Method != http.MethodGet {
 			err = common.UnmarshalBodyReusable(c, &modelRequest)
@@ -156,6 +159,9 @@ func TokenAuth() func(c *gin.Context) {
 
 		token, err := model.ValidateUserToken(key, modelRequest.Model)
 		if err != nil {
+			if token != nil {
+				c.Set("id", token.UserId)
+			}
 			abortWithMessage(c, http.StatusUnauthorized, err.Error())
 			return
 		}
@@ -168,6 +174,7 @@ func TokenAuth() func(c *gin.Context) {
 			abortWithMessage(c, http.StatusForbidden, "用户已被封禁")
 			return
 		}
+		c.Set("relayIp", c.ClientIP())
 		c.Set("is_tools", false)
 		if strings.HasPrefix(c.Request.URL.Path, "/v1/chat/completions") || strings.HasPrefix(c.Request.URL.Path, "/v1/completions") {
 			var reqBody relaymodel.GeneralOpenAIRequest
@@ -204,9 +211,13 @@ func TokenAuth() func(c *gin.Context) {
 		c.Set("id", token.UserId)
 		c.Set("token_id", token.Id)
 		c.Set("token_name", token.Name)
+		c.Set("billing_enabled", token.BillingEnabled)
 		if token.Group == "" {
-			userId := c.GetInt("id")
-			userGroup, _ := model.GetUserGroup(userId)
+			userGroup, err := model.GetUserGroup(token.UserId)
+			if err != nil {
+				abortWithMessage(c, http.StatusForbidden, "未能获取用户分组信息")
+				return
+			}
 			c.Set("group", userGroup)
 		} else {
 			c.Set("group", token.Group)

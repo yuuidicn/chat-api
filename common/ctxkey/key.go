@@ -1,6 +1,7 @@
 package ctxkey
 
 const (
+	Config            = "config"
 	Id                = "id"
 	Username          = "username"
 	Role              = "role"
@@ -9,6 +10,7 @@ const (
 	ChannelId         = "channel_id"
 	SpecificChannelId = "specific_channel_id"
 	RequestModel      = "request_model"
+	Cross             = "cross"
 	ConvertedRequest  = "converted_request"
 	OriginalModel     = "original_model"
 	Group             = "group"

@@ -2,6 +2,8 @@ package util
 
 import (
 	"one-api/common"
+	"one-api/common/ctxkey"
+	"one-api/model"
 	"one-api/relay/constant"
 	"strings"
 
@@ -20,17 +22,21 @@ type RelayMeta struct {
 	ModelMapping    map[string]string
 	Headers         map[string]string
 	BaseURL         string
-	APIVersion      string
 	APIKey          string
 	APIType         int
-	Config          map[string]string
+	Config          model.ChannelConfig
 	IsStream        bool
+	AttemptsLog     string
 	OriginModelName string
 	ActualModelName string
 	RequestURLPath  string
 	PromptTokens    int // only for DoResponse
 	FixedContent    string
 	IsClaude        bool
+	BillingEnabled  bool
+	UnlimitedQuota  bool
+	ProxyURL        string
+	RelayIp         string
 }
 
 func GetRelayMeta(c *gin.Context) *RelayMeta {
@@ -46,17 +52,22 @@ func GetRelayMeta(c *gin.Context) *RelayMeta {
 		ModelMapping:   c.GetStringMapString("model_mapping"),
 		Headers:        c.GetStringMapString("headers"),
 		BaseURL:        c.GetString("base_url"),
-		APIVersion:     c.GetString(common.ConfigKeyAPIVersion),
 		APIKey:         strings.TrimPrefix(c.Request.Header.Get("Authorization"), "Bearer "),
-		Config:         nil,
 		RequestURLPath: c.Request.URL.String(),
 		FixedContent:   c.GetString("fixed_content"),
+		AttemptsLog:    c.GetString("attemptsLog"),
+		BillingEnabled: c.GetBool("billing_enabled"),
+		UnlimitedQuota: c.GetBool("token_unlimited_quota"),
+		ProxyURL:       c.GetString("proxy_url"),
+		RelayIp:        c.GetString("relayIp"),
 	}
-	if meta.ChannelType == common.ChannelTypeAzure {
-		meta.APIVersion = GetAzureAPIVersion(c)
-	}
+
 	if meta.BaseURL == "" {
 		meta.BaseURL = common.ChannelBaseURLs[meta.ChannelType]
+	}
+	cfg, ok := c.Get(ctxkey.Config)
+	if ok {
+		meta.Config = cfg.(model.ChannelConfig)
 	}
 	meta.APIType = constant.ChannelType2APIType(meta.ChannelType)
 	return &meta

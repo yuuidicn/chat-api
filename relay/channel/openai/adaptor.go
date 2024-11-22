@@ -32,13 +32,13 @@ func (a *Adaptor) GetRequestURL(meta *util.RelayMeta) (string, error) {
 		if meta.Mode == constant.RelayModeImagesGenerations {
 			// https://learn.microsoft.com/en-us/azure/ai-services/openai/dall-e-quickstart?tabs=dalle3%2Ccommand-line&pivots=rest-api
 			// https://{resource_name}.openai.azure.com/openai/deployments/dall-e-3/images/generations?api-version=2024-03-01-preview
-			fullRequestURL := fmt.Sprintf("%s/openai/deployments/%s/images/generations?api-version=%s", meta.BaseURL, meta.ActualModelName, meta.APIVersion)
+			fullRequestURL := fmt.Sprintf("%s/openai/deployments/%s/images/generations?api-version=%s", meta.BaseURL, meta.ActualModelName, meta.Config.APIVersion)
 			return fullRequestURL, nil
 		}
 
 		// https://learn.microsoft.com/en-us/azure/cognitive-services/openai/chatgpt-quickstart?pivots=rest-api&tabs=command-line#rest-api
 		requestURL := strings.Split(meta.RequestURLPath, "?")[0]
-		requestURL = fmt.Sprintf("%s?api-version=%s", requestURL, meta.APIVersion)
+		requestURL = fmt.Sprintf("%s?api-version=%s", requestURL, meta.Config.APIVersion)
 		task := strings.TrimPrefix(requestURL, "/v1/")
 		model_ := meta.ActualModelName
 		model_ = strings.Replace(model_, ".", "", -1)
@@ -47,6 +47,9 @@ func (a *Adaptor) GetRequestURL(meta *util.RelayMeta) (string, error) {
 		model_ = strings.TrimSuffix(model_, "-0613")
 		if meta.ActualModelName == "gpt-4-turbo" {
 			model_ = "gpt-4-turbo-2024-04-09"
+		}
+		if meta.ActualModelName == "gpt-4o-2024-05-13" {
+			model_ = "gpt-4o"
 		}
 		//https://github.com/songquanpeng/one-api/issues/1191
 		// {your endpoint}/openai/deployments/{your azure_model}/chat/completions?api-version={api_version}
@@ -78,9 +81,25 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Request, meta *ut
 	return nil
 }
 
-func (a *Adaptor) ConvertRequest(c *gin.Context, relayMode int, request *model.GeneralOpenAIRequest) (any, error) {
+func (a *Adaptor) ConvertRequest(c *gin.Context, meta *util.RelayMeta, request *model.GeneralOpenAIRequest) (any, error) {
 	if request == nil {
 		return nil, errors.New("request is nil")
+	}
+
+	if meta.ChannelType == common.ChannelTypeOpenAI {
+		request.StreamOptions = nil
+	}
+
+	if request.StreamOptions == nil && meta.ChannelType == common.ChannelTypeOpenAI && meta.IsStream {
+		request.StreamOptions = &model.StreamOptions{
+			IncludeUsage: true,
+		}
+	}
+	if strings.HasPrefix(request.Model, "o1-") {
+		if request.MaxCompletionTokens == 0 && request.MaxTokens != 0 {
+			request.MaxCompletionTokens = request.MaxTokens
+			request.MaxTokens = 0
+		}
 	}
 	return request, nil
 }
@@ -97,16 +116,18 @@ func (a *Adaptor) ConvertImageRequest(request *model.ImageRequest) (any, error) 
 	return request, nil
 }
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, meta *util.RelayMeta) (aitext string, usage *model.Usage, err *model.ErrorWithStatusCode) {
+
 	aitext = ""
 	if meta.IsStream {
+
 		var responseText string
 		var toolCount int
-		err, responseText, toolCount = StreamHandler(c, resp, meta.Mode, meta.ActualModelName, meta.FixedContent)
+		err, responseText, toolCount, usage = StreamHandler(c, resp, meta.Mode, meta.ActualModelName, meta.FixedContent)
 		aitext = responseText
 		if usage == nil || usage.TotalTokens == 0 {
 			usage = ResponseText2Usage(responseText, meta.ActualModelName, meta.PromptTokens)
 		}
-		if usage.TotalTokens != 0 && usage.PromptTokens == 0 { // some channels don't return prompt tokens & completion tokens
+		if usage.TotalTokens != 0 && usage.CompletionTokens == 0 { // some channels don't return prompt tokens & completion tokens
 			usage.PromptTokens = meta.PromptTokens
 			usage.CompletionTokens = usage.TotalTokens - meta.PromptTokens
 		}
@@ -124,6 +145,7 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, meta *util.Rel
 				}
 			}
 		}
+
 	} else {
 		switch meta.Mode {
 		case constant.RelayModeImagesGenerations:

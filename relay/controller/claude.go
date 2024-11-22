@@ -5,13 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"one-api/common"
 	"one-api/common/config"
 	"one-api/common/logger"
-	dbmodel "one-api/model"
 	"one-api/relay/channel/openai"
+	"one-api/relay/constant"
 	"one-api/relay/helper"
 	"one-api/relay/model"
 	"one-api/relay/util"
@@ -35,7 +34,7 @@ func RelayClaude(c *gin.Context) *model.ErrorWithStatusCode {
 	}
 
 	meta.IsStream = textRequest.Stream
-
+	meta.AttemptsLog = c.GetString("attemptsLog")
 	// map model name
 	var isModelMapped bool
 	meta.OriginModelName = textRequest.Model
@@ -48,38 +47,25 @@ func RelayClaude(c *gin.Context) *model.ErrorWithStatusCode {
 	meta.PromptTokens = promptTokens
 	ratio := modelRatio * groupRatio
 	preConsumedQuota := 0
-	preConsumedTokens := config.PreConsumedQuota
-	if textRequest.MaxTokens != 0 {
-		preConsumedTokens = promptTokens + textRequest.MaxTokens
+	preConsumedTokens := promptTokens
+	if config.PreConsumedQuota <= 0 {
+		config.PreConsumedQuota = 500
 	}
-	token, err := dbmodel.GetTokenById(meta.TokenId)
-	if err != nil {
-		log.Println("获取token出错:", err)
+	if preConsumedTokens <= 0 {
+		preConsumedTokens = config.PreConsumedQuota
 	}
 	BillingByRequestEnabled, _ := strconv.ParseBool(config.OptionMap["BillingByRequestEnabled"])
 	ModelRatioEnabled, _ := strconv.ParseBool(config.OptionMap["ModelRatioEnabled"])
-	if BillingByRequestEnabled && ModelRatioEnabled {
-		if token.BillingEnabled {
-			modelRatio2, ok := common.GetModelRatio2(textRequest.Model)
-			if !ok {
-				preConsumedQuota = int(float64(preConsumedTokens) * ratio)
-			} else {
+	preConsumedQuota = int(float64(preConsumedTokens) * ratio)
+	if BillingByRequestEnabled {
+		shouldUseModelRatio2 := !ModelRatioEnabled || (ModelRatioEnabled && meta.BillingEnabled)
+		if shouldUseModelRatio2 {
+			modelRatio2, ok := common.GetModelRatio2(meta.OriginModelName)
+			if ok {
 				ratio = modelRatio2 * groupRatio
 				preConsumedQuota = int(ratio * config.QuotaPerUnit)
 			}
-		} else {
-			preConsumedQuota = int(float64(preConsumedTokens) * ratio)
 		}
-	} else if BillingByRequestEnabled {
-		modelRatio2, ok := common.GetModelRatio2(textRequest.Model)
-		if !ok {
-			preConsumedQuota = int(float64(preConsumedTokens) * ratio)
-		} else {
-			ratio = modelRatio2 * groupRatio
-			preConsumedQuota = int(ratio * config.QuotaPerUnit)
-		}
-	} else {
-		preConsumedQuota = int(float64(preConsumedTokens) * ratio)
 	}
 
 	preConsumedQuota, bizErr := preConsumeQuota(ctx, preConsumedQuota, meta)
@@ -89,10 +75,11 @@ func RelayClaude(c *gin.Context) *model.ErrorWithStatusCode {
 	}
 
 	adaptor := helper.GetAdaptor(meta.APIType)
+
 	if adaptor == nil {
 		return openai.ErrorWrapper(fmt.Errorf("invalid api type: %d", meta.APIType), "invalid_api_type", http.StatusBadRequest)
 	}
-
+	adaptor.Init(meta)
 	// get request body
 	var requestBody io.Reader
 	if isModelMapped {
@@ -104,6 +91,18 @@ func RelayClaude(c *gin.Context) *model.ErrorWithStatusCode {
 	} else {
 		requestBody = c.Request.Body
 	}
+	if meta.APIType == constant.APITypeGCP || meta.APIType == constant.APITypeAwsClaude {
+		convertedRequest, err := adaptor.ConvertRequest(c, meta, textRequest)
+		if err != nil {
+			return openai.ErrorWrapper(err, "convert_request_failed", http.StatusInternalServerError)
+		}
+		jsonData, err := json.Marshal(convertedRequest)
+		if err != nil {
+			return openai.ErrorWrapper(err, "json_marshal_failed", http.StatusInternalServerError)
+		}
+		logger.Debugf(ctx, "converted request: \n%s", string(jsonData))
+		requestBody = bytes.NewBuffer(jsonData)
+	}
 	// do responses
 	startTime := time.Now()
 	// do request
@@ -112,28 +111,39 @@ func RelayClaude(c *gin.Context) *model.ErrorWithStatusCode {
 		logger.Errorf(ctx, "DoRequest failed: %s", err.Error())
 		return openai.ErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
 	}
+	statusCodeMappingStr := c.GetString("status_code_mapping")
 	if resp != nil {
 		errorHappened := (resp.StatusCode != http.StatusOK) || (meta.IsStream && strings.HasPrefix(resp.Header.Get("Content-Type"), "application/json"))
 		if errorHappened {
 			logger.Errorf(ctx, "errorHappened is not nil: %+v", errorHappened)
 			util.ReturnPreConsumedQuota(ctx, preConsumedQuota, meta.TokenId)
-			return util.RelayErrorHandler(resp)
+			openaiErr := util.RelayErrorHandler(resp)
+			// reset status code 重置状态码
+			util.ResetStatusCode(openaiErr, statusCodeMappingStr)
+			return openaiErr
 		}
 	}
 
 	// 执行 DoResponse 方法
 	aitext, usage, respErr := adaptor.DoResponse(c, resp, meta)
-
+	if respErr != nil {
+		if meta.ChannelType == common.ChannelTypeAwsClaude {
+			actualStatusCode := determineActualStatusCode(respErr.StatusCode, respErr.Message)
+			// 更新 respErr 的状态码
+			respErr.StatusCode = actualStatusCode
+			// 使用实际的状态码
+			c.Status(actualStatusCode)
+		}
+		util.ReturnPreConsumedQuota(ctx, preConsumedQuota, meta.TokenId)
+		util.ResetStatusCode(respErr, statusCodeMappingStr)
+		return respErr
+	}
 	// 记录结束时间
 	endTime := time.Now()
 
 	// 计算执行时间（单位：秒）
 	duration := int(endTime.Sub(startTime).Seconds())
-	if respErr != nil {
-		logger.Errorf(ctx, "respErr is not nil: %+v", respErr)
-		util.ReturnPreConsumedQuota(ctx, preConsumedQuota, meta.TokenId)
-		return respErr
-	}
+
 	// post-consume quota
 	go postConsumeQuota(ctx, usage, meta, textRequest, ratio, preConsumedQuota, modelRatio, groupRatio, aitext, duration)
 	return nil

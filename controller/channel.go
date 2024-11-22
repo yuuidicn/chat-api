@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"one-api/common"
 	"one-api/common/config"
@@ -20,8 +22,9 @@ func GetAllChannels(c *gin.Context) {
 	if pageSize < 0 {
 		pageSize = config.ItemsPerPage
 	}
-	idSort, _ := strconv.ParseBool(c.Query("id_sort"))
-	channels, err := model.GetAllChannels(p*pageSize, pageSize, false, idSort)
+
+	// 获取所有标签渠道
+	taggedChannels, err := model.GetTaggedChannels()
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
@@ -29,12 +32,36 @@ func GetAllChannels(c *gin.Context) {
 		})
 		return
 	}
+
+	// 获取分页的未标签渠道
+	untaggedChannels, err := model.GetUntaggedChannels(p*pageSize, pageSize)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+
+	// 获取未标签渠道总数
+	total, err := model.GetUntaggedChannelsCount()
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+
+	// 合并结果
+	allChannels := append(taggedChannels, untaggedChannels...)
+
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data":    channels,
+		"data":    allChannels,
+		"total":   total, // 返回未标签渠道的总数
 	})
-	return
 }
 
 func SearchChannels(c *gin.Context) {
@@ -209,4 +236,68 @@ func UpdateChannel(c *gin.Context) {
 		"data":    channel,
 	})
 	return
+}
+
+func FetchUpstreamModels(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+	channel, err := model.GetChannelById(id, true)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+	if channel.Type != common.ChannelTypeOpenAI {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "仅支持 OpenAI 类型渠道",
+		})
+		return
+	}
+	var baseURL string
+	if channel.BaseURL != nil && *channel.BaseURL != "" {
+		baseURL = *channel.BaseURL
+	} else {
+		baseURL = "https://api.openai.com"
+	}
+
+	// 移除末尾的 '/'（如果存在）
+	baseURL = strings.TrimRight(baseURL, "/")
+
+	// 添加 "/v1/models" 到 URL
+	url := fmt.Sprintf("%s/v1/models", baseURL)
+
+	body, err := GetResponseBody("GET", url, channel, GetAuthHeader(channel.Key))
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+
+	// 直接返回原始响应内容
+	var rawJSON json.RawMessage
+	err = json.Unmarshal(body, &rawJSON)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "无法解析上游返回的 JSON: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    rawJSON,
+	})
 }

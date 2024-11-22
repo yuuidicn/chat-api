@@ -53,6 +53,9 @@ func SetApiRouter(router *gin.Engine) {
 				selfRoute.POST("/aff_withdrawal", controller.AffQuota)
 				selfRoute.GET("/option", controller.GetUserOptions)
 				selfRoute.GET("/userwithdrawals", controller.GetWithdrawalOrdersEndpoint) // 获取用户自己的提现订单列表
+				selfRoute.GET("/group", controller.GetUserGroups)
+				selfRoute.POST("/quota_alert", controller.SetUserQuotaAlert)
+				selfRoute.GET("/quota_alert", controller.GetUserQuotaAlertSettings)
 			}
 
 			adminRoute := userRoute.Group("/")
@@ -94,6 +97,7 @@ func SetApiRouter(router *gin.Engine) {
 			channelRoute.DELETE("/disabled", controller.DeleteDisabledChannel)
 			channelRoute.DELETE("/:id", controller.DeleteChannel)
 			channelRoute.POST("/batch", controller.DeleteChannelBatch)
+			channelRoute.GET("/fetch_models/:id", controller.FetchUpstreamModels)
 		}
 		tokenRoute := apiRouter.Group("/token")
 		tokenRoute.Use(middleware.UserAuth())
@@ -101,8 +105,8 @@ func SetApiRouter(router *gin.Engine) {
 			tokenRoute.GET("/", controller.GetAllTokens)
 			tokenRoute.GET("/search", controller.SearchTokens)
 			tokenRoute.GET("/:id", controller.GetToken)
-			tokenRoute.POST("/", controller.AddToken)
 			tokenRoute.PUT("/", controller.UpdateToken)
+			tokenRoute.POST("/", controller.AddToken)
 			tokenRoute.PUT("/:id/billing_strategy", controller.UpdateTokenBillingStrategy)
 			tokenRoute.DELETE("/:id", controller.DeleteToken)
 		}
@@ -132,15 +136,13 @@ func SetApiRouter(router *gin.Engine) {
 		logRoute.GET("/self/stat", middleware.UserAuth(), controller.GetLogsSelfStat)
 		logRoute.GET("/search", middleware.AdminAuth(), controller.SearchAllLogs)
 		logRoute.GET("/self", middleware.UserAuth(), controller.GetUserLogs)
-		logRoute.GET("/self/search", middleware.UserAuth(), controller.SearchUserLogs)
-
+		logRoute.GET("/hourly-stats", middleware.UserAuth(), controller.SearchHourlylogs)
 		logproRoute := apiRouter.Group("/logall")
 		logproRoute.GET("/stat", middleware.AdminAuth(), controller.GetLogsProStat)
 		logproRoute.GET("/search", middleware.AdminAuth(), controller.SearchProLogs)
 
 		dataRoute := apiRouter.Group("/data")
 		dataRoute.GET("/", middleware.AdminAuth(), controller.GetAllQuotaDates)
-		dataRoute.GET("/self", middleware.UserAuth(), controller.GetUserQuotaDates)
 
 		logRoute.Use(middleware.CORS())
 		{

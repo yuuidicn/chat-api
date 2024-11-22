@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"one-api/common"
 	"one-api/relay/channel"
 	"one-api/relay/constant"
 	"one-api/relay/model"
@@ -17,10 +16,12 @@ import (
 // https://help.aliyun.com/zh/dashscope/developer-reference/api-details
 
 type Adaptor struct {
+	meta *util.RelayMeta
 }
 
 func (a *Adaptor) Init(meta *util.RelayMeta) {
 
+	a.meta = meta
 }
 
 func (a *Adaptor) GetRequestURL(meta *util.RelayMeta) (string, error) {
@@ -37,17 +38,17 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Request, meta *ut
 	if meta.IsStream {
 		req.Header.Set("X-DashScope-SSE", "enable")
 	}
-	if c.GetString(common.ConfigKeyPlugin) != "" {
-		req.Header.Set("X-DashScope-Plugin", c.GetString(common.ConfigKeyPlugin))
+	if a.meta.Config.Plugin != "" {
+		req.Header.Set("X-DashScope-Plugin", a.meta.Config.Plugin)
 	}
 	return nil
 }
 
-func (a *Adaptor) ConvertRequest(c *gin.Context, relayMode int, request *model.GeneralOpenAIRequest) (any, error) {
+func (a *Adaptor) ConvertRequest(c *gin.Context, meta *util.RelayMeta, request *model.GeneralOpenAIRequest) (any, error) {
 	if request == nil {
 		return nil, errors.New("request is nil")
 	}
-	switch relayMode {
+	switch meta.Mode {
 	case constant.RelayModeEmbeddings:
 		baiduEmbeddingRequest := ConvertEmbeddingRequest(*request)
 		return baiduEmbeddingRequest, nil

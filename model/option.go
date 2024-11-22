@@ -71,6 +71,8 @@ func InitOptionMap() {
 	config.OptionMap["TopupGroupRatio"] = common.TopupGroupRatio2JSONString()
 	config.OptionMap["TopupRatio"] = common.TopupRatioJSONString()
 	config.OptionMap["TopupAmount"] = common.TopupAmountJSONString()
+	config.OptionMap["GroupUserRatio"] = common.GroupUserRatioJSONString()
+	config.OptionMap["UserGroupEnabled"] = strconv.FormatBool(config.UserGroupEnabled)
 	config.OptionMap["GitHubClientId"] = ""
 	config.OptionMap["GitHubClientSecret"] = ""
 	config.OptionMap["WeChatServerAddress"] = ""
@@ -110,7 +112,7 @@ func InitOptionMap() {
 	config.OptionMap["MiniQuota"] = strconv.FormatFloat(config.MiniQuota, 'f', -1, 64)
 	config.OptionMap["ProporTions"] = strconv.Itoa(config.ProporTions)
 	config.OptionMap["RedempTionCount"] = strconv.Itoa(config.RedempTionCount)
-
+	config.OptionMap["OutProxyUrl"] = ""
 	config.OptionMapRWMutex.Unlock()
 	loadOptionsFromDatabase()
 }
@@ -226,6 +228,9 @@ func updateOptionMap(key string, value string) (err error) {
 			config.TopupAmountEnabled = boolValue
 		case "BlankReplyRetryEnabled":
 			config.BlankReplyRetryEnabled = boolValue
+		case "UserGroupEnabled":
+			config.UserGroupEnabled = boolValue
+
 		}
 	}
 	switch key {
@@ -308,6 +313,8 @@ func updateOptionMap(key string, value string) (err error) {
 		err = common.UpdateGroupRatioByJSONString(value)
 	case "CompletionRatio":
 		err = common.UpdateCompletionRatioByJSONString(value)
+	case "GroupUserRatio":
+		err = common.UpdateGroupUserRatioByJSONString(value)
 	case "TopUpLink":
 		config.TopUpLink = value
 	case "ChatLink":
@@ -324,7 +331,10 @@ func updateOptionMap(key string, value string) (err error) {
 		config.UserGroup = value
 	case "VipUserGroup":
 		config.VipUserGroup = value
+	case "OutProxyUrl":
+		config.OutProxyUrl = value
 	}
+
 	return err
 }
 

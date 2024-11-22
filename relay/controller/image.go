@@ -113,35 +113,19 @@ func RelayImageHelper(c *gin.Context, relayMode int) *relaymodel.ErrorWithStatus
 	}
 	BillingByRequestEnabled, _ := strconv.ParseBool(config.OptionMap["BillingByRequestEnabled"])
 	ModelRatioEnabled, _ := strconv.ParseBool(config.OptionMap["ModelRatioEnabled"])
+	quota = int(ratio*sizeRatio*imageCostRatio*1000) * imageRequest.N
+	modelRatioString = fmt.Sprintf("模型倍率 %.2f", modelRatio)
 
-	if BillingByRequestEnabled && ModelRatioEnabled {
-		if token.BillingEnabled {
+	if BillingByRequestEnabled {
+		shouldUseModelRatio2 := !ModelRatioEnabled || (ModelRatioEnabled && token.BillingEnabled)
+		if shouldUseModelRatio2 {
 			modelRatio2, ok := common.GetModelRatio2(imageRequest.Model)
-			if !ok { // 如果 ModelRatio2 中没有对应的 name，则继续使用之前的 quota 值
-				quota = int(ratio*sizeRatio*imageCostRatio*1000) * imageRequest.N
-				modelRatioString = fmt.Sprintf("模型倍率 %.2f", modelRatio)
-			} else {
+			if ok {
 				ratio = modelRatio2 * groupRatio
 				quota = int(ratio * config.QuotaPerUnit)
 				modelRatioString = "按次计费"
 			}
-		} else {
-			quota = int(ratio*sizeRatio*imageCostRatio*1000) * imageRequest.N
-			modelRatioString = fmt.Sprintf("模型倍率 %.2f", modelRatio)
 		}
-	} else if BillingByRequestEnabled {
-		modelRatio2, ok := common.GetModelRatio2(imageRequest.Model)
-		if !ok { // 如果 ModelRatio2 中没有对应的 name，则继续使用之前的 quota 值
-			quota = int(ratio*sizeRatio*imageCostRatio*1000) * imageRequest.N
-			modelRatioString = fmt.Sprintf("模型倍率 %.2f", modelRatio)
-		} else {
-			ratio = modelRatio2 * groupRatio
-			quota = int(ratio * 1 * 500000)
-			modelRatioString = "按次计费"
-		}
-	} else {
-		quota = int(ratio*sizeRatio*imageCostRatio*1000) * imageRequest.N
-		modelRatioString = fmt.Sprintf("模型倍率 %.2f", modelRatio)
 	}
 
 	if userQuota-quota < 0 {
@@ -164,7 +148,7 @@ func RelayImageHelper(c *gin.Context, relayMode int) *relaymodel.ErrorWithStatus
 		if err != nil {
 			common.SysError("error consuming token remain quota: " + err.Error())
 		}
-		err = model.CacheDecreaseUserQuota(meta.UserId, quota)
+		err = model.CacheDecreaseUserQuota(ctx, meta.UserId, quota)
 		if err != nil {
 			logger.Error(ctx, "decrease_user_quota_failed"+err.Error())
 		}
@@ -176,7 +160,7 @@ func RelayImageHelper(c *gin.Context, relayMode int) *relaymodel.ErrorWithStatus
 			tokenName := c.GetString("token_name")
 			multiplier := fmt.Sprintf(" %s，分组倍率 %.2f", modelRatioString, groupRatio)
 			logContent := " "
-			model.RecordConsumeLog(ctx, meta.UserId, meta.ChannelId, meta.ChannelName, 0, 0, imageRequest.Model, tokenName, quota, logContent, meta.TokenId, multiplier, userQuota, int(useTimeSeconds), false)
+			model.RecordConsumeLog(ctx, meta.UserId, meta.ChannelId, meta.ChannelName, 0, 0, imageRequest.Model, tokenName, quota, logContent, meta.TokenId, multiplier, userQuota, int(useTimeSeconds), false, meta.AttemptsLog, meta.RelayIp)
 			model.UpdateUserUsedQuotaAndRequestCount(meta.UserId, quota)
 			model.UpdateChannelUsedQuota(meta.ChannelId, quota)
 		}

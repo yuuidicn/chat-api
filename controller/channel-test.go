@@ -6,20 +6,20 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"one-api/common"
 	"one-api/common/config"
+	"one-api/common/ctxkey"
 	"one-api/middleware"
 	"one-api/model"
 	"one-api/relay/constant"
 	"one-api/relay/helper"
-	dbmodel "one-api/relay/model"
 	relaymodel "one-api/relay/model"
 	"one-api/relay/util"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,35 +27,24 @@ import (
 )
 
 type BotResponse struct {
-	ID      string        `json:"id"`
-	Created int64         `json:"created"`
-	Object  string        `json:"object"`
-	Choices []interface{} `json:"choices"`
-	Usage   BotUsage      `json:"usage"`
-	Model   string        `json:"model"`
-	// added Error field here
-	Error        dbmodel.Error `json:"error"`
-	FinishReason interface{}   `json:"finish_reason,omitempty"`
+	Model string `json:"model"`
+	Usage struct {
+		PromptTokens        int `json:"prompt_tokens"`
+		CompletionTokens    int `json:"completion_tokens"`
+		TotalTokens         int `json:"total_tokens"`
+		PromptTokensDetails *struct {
+			CachedTokens int `json:"cached_tokens"`
+			AudioTokens  int `json:"audio_tokens"`
+		} `json:"prompt_tokens_details,omitempty"`
+		CompletionTokensDetails *struct {
+			ReasoningTokens          int `json:"reasoning_tokens"`
+			AudioTokens              int `json:"audio_tokens"`
+			AcceptedPredictionTokens int `json:"accepted_prediction_tokens"`
+			RejectedPredictionTokens int `json:"rejected_prediction_tokens"`
+		} `json:"completion_tokens_details,omitempty"`
+	} `json:"usage"`
 }
 
-type BotUsage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
-}
-
-func calculatePromptTokens(str string) int {
-	return len([]rune(str))
-}
-
-func calculateCompletionTokens(messagesMap []map[string]string) int {
-	// adjust the calculation according to your requirements
-	return len(messagesMap)
-}
-
-func calculateTotalTokens(promptTokens int, completionTokens int) int {
-	return promptTokens + completionTokens
-}
 func testChannel(channel *model.Channel, modelTest string) (err error, openaiErr *relaymodel.Error) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -76,23 +65,20 @@ func testChannel(channel *model.Channel, modelTest string) (err error, openaiErr
 
 	c.Set("channel", channel.Type)
 	c.Set("base_url", channel.GetBaseURL())
-	middleware.SetupContextForSelectedChannel(c, channel, "")
+	cfg, _ := channel.LoadConfig()
+	c.Set(ctxkey.Config, cfg)
+	middleware.SetupContextForSelectedChannel(c, channel, "", "")
 	meta := util.GetRelayMeta(c)
-
 	apiType := constant.ChannelType2APIType(channel.Type)
-	if meta.ChannelType == common.ChannelTypeAzure {
-
-		meta.APIVersion = channel.Other
-	}
 	adaptor := helper.GetAdaptor(apiType)
 	if adaptor == nil {
 		return fmt.Errorf("invalid api type: %d, adaptor is nil", apiType), nil
 	}
 	adaptor.Init(meta)
 	request := buildTestRequest(modelTest)
-	request.Model = modelTest
+	request.Model, _ = util.GetMappedModelName(request.Model, meta.ModelMapping)
 	meta.OriginModelName, meta.ActualModelName = modelTest, modelTest
-	convertedRequest, err := adaptor.ConvertRequest(c, constant.RelayModeChatCompletions, request)
+	convertedRequest, err := adaptor.ConvertRequest(c, meta, request)
 	if err != nil {
 		return err, nil
 	}
@@ -110,6 +96,93 @@ func testChannel(channel *model.Channel, modelTest string) (err error, openaiErr
 		err := util.RelayErrorHandler(resp)
 		return fmt.Errorf("status code %d: %s", resp.StatusCode, err.Error.Message), &err.Error
 	}
+
+	if meta.ChannelType == common.ChannelTypeCustom ||
+		meta.ChannelType == common.ChannelTypeOpenAI {
+		// 读取并保存原始响应内容
+		responseBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("failed to read response body: %v", err), nil
+		}
+		resp.Body = io.NopCloser(bytes.NewBuffer(responseBody))
+
+		// 验证模型映射
+		modelMap := map[string]string{
+			"gpt-3.5-turbo":          "gpt-3.5-turbo-0125",
+			"gpt-3.5-turbo-1106":     "gpt-3.5-turbo-1106",
+			"gpt-3.5-turbo-0125":     "gpt-3.5-turbo-0125",
+			"gpt-3.5-turbo-16k":      "gpt-3.5-turbo-16k-0613",
+			"gpt-4":                  "gpt-4-0613",
+			"gpt-4-0613":             "gpt-4-0613",
+			"gpt-4-1106-preview":     "gpt-4-1106-preview",
+			"gpt-4-0125-preview":     "gpt-4-0125-preview",
+			"gpt-4-turbo-preview":    "gpt-4-0125-preview",
+			"gpt-4-turbo":            "gpt-4-turbo-2024-04-09",
+			"gpt-4-turbo-2024-04-09": "gpt-4-turbo-2024-04-09",
+			"gpt-4o":                 "gpt-4o-2024-08-06",
+			"gpt-4o-2024-08-06":      "gpt-4o-2024-08-06",
+			"gpt-4o-2024-11-20":      "gpt-4o-2024-11-20",
+			"gpt-4o-2024-05-13":      "gpt-4o-2024-05-13",
+			"chatgpt-4o-latest":      "chatgpt-4o-latest",
+			"gpt-4o-mini":            "gpt-4o-mini-2024-07-18",
+			"gpt-4o-mini-2024-07-18": "gpt-4o-mini-2024-07-18",
+			"o1-preview-2024-09-12":  "o1-preview-2024-09-12",
+			"o1-preview":             "o1-preview-2024-09-12",
+			"o1-mini-2024-09-12":     "o1-mini-2024-09-12",
+			"o1-mini":                "o1-mini-2024-09-12",
+		}
+
+		// 检查模型映射
+		if expectedModel, exists := modelMap[modelTest]; exists {
+			// 先尝试解析是否为字符串包装的JSON
+			var jsonString string
+			err := json.Unmarshal(responseBody, &jsonString)
+			if err == nil {
+				// 如果成功解析为字符串，说明JSON被包装了，需要再次解析
+				responseBody = []byte(jsonString)
+			}
+
+			// 解析为通用map
+			var fullResponseMap map[string]interface{}
+			if err := json.Unmarshal(responseBody, &fullResponseMap); err != nil {
+				common.SysLog(fmt.Sprintf("Failed to parse response for model %s: %s", modelTest, string(responseBody)))
+				return fmt.Errorf("failed to parse response: %v", err), nil
+			}
+
+			var warnings []string
+			// 检查模型匹配
+			model, _ := fullResponseMap["model"].(string)
+			if expectedModel != model {
+				warnings = append(warnings, fmt.Sprintf("模型不匹配：期望 %s，实际返回 %s", expectedModel, model))
+			}
+
+			// 获取 usage 部分
+			usage, ok := fullResponseMap["usage"].(map[string]interface{})
+			if !ok {
+				return fmt.Errorf("response missing usage field"), nil
+			}
+
+			if promptDetails, ok := usage["prompt_tokens_details"].(map[string]interface{}); !ok {
+				warnings = append(warnings, "Usage 中缺少 prompt_tokens_details 信息")
+			} else if len(promptDetails) < 2 { // 应该有 cached_tokens 和 audio_tokens 两个字段
+				warnings = append(warnings, "prompt_tokens_details 数据不完整")
+			}
+
+			// 检查 completion_tokens_details
+			if completionDetails, ok := usage["completion_tokens_details"].(map[string]interface{}); !ok {
+				warnings = append(warnings, "Usage 中缺少 completion_tokens_details 信息")
+			} else if len(completionDetails) < 4 { // 应该有 reasoning_tokens, audio_tokens, accepted_prediction_tokens, rejected_prediction_tokens 四个字段
+				warnings = append(warnings, "completion_tokens_details 数据不完整")
+			}
+
+			if len(warnings) > 0 {
+				warningMessage := strings.Join(warnings, "; ")
+				common.SysLog(fmt.Sprintf("Response warnings for model %s: %s", modelTest, warningMessage))
+				return fmt.Errorf("模型可用，但有警告: %s", warningMessage), nil
+			}
+		}
+	}
+
 	_, usage, respErr := adaptor.DoResponse(c, resp, meta)
 	if respErr != nil {
 		return fmt.Errorf("%s", respErr.Error.Message), &respErr.Error
@@ -117,31 +190,18 @@ func testChannel(channel *model.Channel, modelTest string) (err error, openaiErr
 	if usage == nil {
 		return errors.New("usage is nil"), nil
 	}
-	//result := w.Result()
-	// print result.Body
-	//respBody, err := io.ReadAll(result.Body)
-	//if err != nil {
-	//	return err, nil
-	//}
-	//common.SysLog(fmt.Sprintf("testing channel #%d, response: \n%s", channel.Id, string(respBody)))
 	return nil, nil
-}
-
-func randomID() string {
-	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
-	var seededRand *rand.Rand = rand.New(rand.NewSource(time.Now().UnixNano()))
-	b := make([]byte, 10)
-	for i := range b {
-		b[i] = charset[seededRand.Intn(len(charset))]
-	}
-	return "chatcmpl-" + string(b)
 }
 
 func buildTestRequest(modelTest string) *relaymodel.GeneralOpenAIRequest {
 	testRequest := &relaymodel.GeneralOpenAIRequest{
-		MaxTokens: 1,
-		Stream:    false,
-		Model:     modelTest,
+		Stream: false,
+		Model:  modelTest,
+	}
+	if strings.HasPrefix(modelTest, "o1-") {
+		testRequest.MaxCompletionTokens = 5
+	} else {
+		testRequest.MaxTokens = 5
 	}
 	//content, _ := json.Marshal("hi")
 	testMessage := relaymodel.Message{
@@ -382,8 +442,6 @@ func AutomaticallyTestDisabledChannels(frequency int) {
 }
 
 func testChannelAndHandleResult(channel *model.Channel, testInterval time.Duration, lastTestTime time.Time) {
-
-	// 检查modelTest字段是否为空，如果为空则设置为默认值"gpt-3.5-turbo"
 	modelTest := channel.ModelTest
 	if modelTest == "" {
 		modelTest = "gpt-3.5-turbo"
@@ -392,14 +450,25 @@ func testChannelAndHandleResult(channel *model.Channel, testInterval time.Durati
 	// 调用testChannel函数使用确定好的模型进行测试
 	err, _ := testChannel(channel, modelTest)
 
-	if err == nil && channel.Status == common.ChannelStatusAutoDisabled {
-		// 测试通过，更新通道状态为启用
-		model.UpdateChannelStatusById(channel.Id, common.ChannelStatusEnabled)
-		notifyChannelEnabled(channel)  // 发送通知
-		notifyWxPusherEnabled(channel) // 发送通知wxpusher
-	} else if err != nil {
-		// 测试失败，记录错误
-		common.SysError(fmt.Sprintf("Error testing channel #%d: %s", channel.Id, err.Error()))
+	// 如果通道当前是自动禁用状态
+	if channel.Status == common.ChannelStatusAutoDisabled {
+		// 检查是否是"模型可用，但有警告"的情况
+		isModelWarning := err != nil && strings.HasPrefix(err.Error(), "模型可用，但有警告")
+
+		if err == nil || isModelWarning {
+			// 测试通过或仅是模型警告，更新通道状态为启用
+			model.UpdateChannelStatusById(channel.Id, common.ChannelStatusEnabled)
+			notifyChannelEnabled(channel)  // 发送通知
+			notifyWxPusherEnabled(channel) // 发送通知wxpusher
+
+			if isModelWarning {
+				// 记录警告信息但不影响通道启用
+				common.SysLog(fmt.Sprintf("Channel #%d enabled with model warnings: %s", channel.Id, err.Error()))
+			}
+		} else {
+			// 测试失败且是其他错误，记录错误
+			common.SysError(fmt.Sprintf("Error testing channel #%d: %s", channel.Id, err.Error()))
+		}
 	}
 }
 

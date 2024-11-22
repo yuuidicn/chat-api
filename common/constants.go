@@ -8,7 +8,7 @@ import (
 
 var StartTime = time.Now().Unix() // unit: second
 var Version = "v0.0.0"
-var DebugEnabled = os.Getenv("DEBUG") == "true"
+
 var MemoryCacheEnabled = os.Getenv("MEMORY_CACHE_ENABLED") == "true"
 
 var AdjustHour = GetOrDefault("ADJUSTHOUR", 0)
@@ -132,6 +132,7 @@ const (
 	ChannelTypeTogetherAI     = 39
 	ChannelTypeDeepL          = 40
 	ChannelTypeDouBao         = 41
+	ChannelTypeGCP            = 42
 )
 
 var ChannelBaseURLs = []string{
@@ -177,6 +178,7 @@ var ChannelBaseURLs = []string{
 	"https://api.together.xyz",          // 39
 	"https://api-free.deepl.com",        // 40
 	"https://ark.cn-beijing.volces.com", // 41
+	"",                                  //42
 }
 
 const (

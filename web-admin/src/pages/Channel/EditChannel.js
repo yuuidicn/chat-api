@@ -3,14 +3,26 @@ import {useNavigate, useParams} from 'react-router-dom';
 import {API, isMobile, showError, showInfo, showSuccess, verifyJSON} from '../../helpers';
 import {CHANNEL_OPTIONS} from '../../constants';
 import Title from "@douyinfe/semi-ui/lib/es/typography/title";
-import {SideSheet, Space, Spin, Button, Input, Typography, Select, TextArea, Checkbox, Banner,AutoComplete} from "@douyinfe/semi-ui";
+import {SideSheet, Space, Spin, Button, Input,TagInput, Typography, Select, TextArea, Checkbox, Banner,AutoComplete} from "@douyinfe/semi-ui";
 
 const MODEL_MAPPING_EXAMPLE = {
     'gpt-3.5-turbo-0301': 'gpt-3.5-turbo',
     'gpt-4-0314': 'gpt-4',
     'gpt-4-32k-0314': 'gpt-4-32k'
 };
-
+const STATUS_CODE_MAPPING_EXAMPLE = {
+    '400': '500',
+  };
+  const DEFAULT_GEMINI_MODELS = [
+    'gemini-1.5-pro-002',
+    'gemini-1.5-flash-002',
+    'gemini-1.5-pro-latest',
+    'gemini-1.5-flash-latest',
+    'gemini-1.5-pro-exp-0801',
+    'gemini-1.5-pro-exp-0827',
+    'gemini-1.5-flash-exp-0827',
+    'gemini-exp-1114',
+];
 function type2secretPrompt(type) {
     // inputs.type === 15 ? '按照如下格式输入：APIKey|SecretKey' : (inputs.type === 18 ? '按照如下格式输入：APPID|APISecret|APIKey' : '请输入渠道对应的鉴权密钥')
     switch (type) {
@@ -43,6 +55,7 @@ const EditChannel = (props) => {
         base_url: '',
         other: '',
         model_mapping: '',
+        status_code_mapping: '',
         headers: '',
         models: [],
         auto_ban: 1,
@@ -52,9 +65,18 @@ const EditChannel = (props) => {
         priority:'',
         weight:'',
         groups: ['default'],
+        proxy_url :'',
         region: '',
         sk: '',
-        ak: ''
+        ak: '',
+        project_id:'',
+        client_id:'',
+        client_secret:'',
+        refresh_token:'',
+        gcp_account:'',
+        rate_limit_count:'',
+        gemini_model: '',
+        tags: '',
     };
     const [batch, setBatch] = useState(false);
     const [autoBan, setAutoBan] = useState(true);
@@ -72,14 +94,21 @@ const EditChannel = (props) => {
     const [priority, setPriority] = useState(0);
     const [weight, setWeight] = useState(0);
     const [rateLimited, setRateLimited] = useState(false);
+    const [rateLimitedConut, setRateLimitedConut] = useState(0);
     const [istools, setIstools] = useState(true);
     const [isimageurenabled, setIsImageURLEnabled] = useState(false);
-    
+    const [claudeoriginalrequest, setClaudeOriginalRequest] = useState(false);
     const [config, setConfig] = useState({
         region: '',
         sk: '',
         ak: '',
-        user_id: ''
+        cross: '',
+        user_id: '',
+        project_id:'',
+        client_id:'',
+        client_secret:'',
+        refresh_token:'',
+        gemini_model: '',
       });
     const handleInputChange = (name, value) => {
         setInputs((inputs) => ({...inputs, [name]: value}));
@@ -88,10 +117,13 @@ const EditChannel = (props) => {
             // eslint-disable-next-line default-case
             switch (value) {
                 case 14:
-                    localModels = ['claude-instant-1.2', 'claude-2.0', 'claude-2.1', 'claude-3-haiku-20240307','claude-3-opus-20240229', 'claude-3-opus','claude-3-sonnet-20240229'];
+                    localModels = ['claude-instant-1.2', 'claude-2.0', 'claude-2.1', 'claude-3-haiku-20240307','claude-3-5-sonnet-20240620','claude-3-opus-20240229','claude-3-sonnet-20240229','claude-3-5-sonnet-20241022'];
+                    break;
+                case 42:
+                    localModels = ['claude-3-haiku-20240307','claude-3-5-sonnet-20240620','claude-3-opus-20240229','claude-3-sonnet-20240229','claude-3-5-sonnet-20241022'];
                     break;
                 case 35:
-                    localModels = ['claude-instant-1.2', 'claude-2.0', 'claude-2.1', 'claude-3-haiku-20240307','claude-3-opus-20240229','claude-3-sonnet-20240229'];
+                    localModels = ['claude-instant-1.2', 'claude-2.0', 'claude-2.1', 'claude-3-haiku-20240307','claude-3-5-sonnet-20240620','claude-3-sonnet-20240229','claude-3-opus-20240229','claude-3-5-sonnet-20241022'];
                     break;
                 case 11:
                     localModels = ['PaLM-2'];
@@ -115,7 +147,8 @@ const EditChannel = (props) => {
                     localModels = ['hunyuan'];
                     break;
                 case 24:
-                    localModels = ['gemini-1.0-pro-latest','gemini-1.0-pro-001','gemini-1.5-pro-latest','gemini-1.5-flash-latest','gemini-ultra','gemini-1.0-pro-vision-latest','gemini-1.0-pro-vision-001'];
+                    localModels = ['gemini-1.5-pro-001','gemini-1.5-pro-latest','gemini-1.5-flash-latest','gemini-1.5-pro-exp-0801',
+                        'gemini-1.5-pro-exp-0827','gemini-1.5-flash-exp-0827','gemini-1.5-pro-002','gemini-1.5-flash-002','gemini-exp-1114'];
                     break;
                 case 2:
                     localModels = ['midjourney'];
@@ -161,30 +194,67 @@ const EditChannel = (props) => {
     };
     const handleGetModels = async () => {
         try {
-            const baseUrl = inputs.base_url.endsWith('/') ? inputs.base_url.slice(0, -1) : inputs.base_url;
-            const url = `${baseUrl}/v1/models`;
-    
-            // 发起 GET 请求获取模型数据，动态设置 Authorization 头部
-            const response = await fetch(url, {
-                headers: {
-                    'Authorization': `Bearer ${inputs.key}`
-                }
-            });
-    
-            if (!response.ok) {
-                throw new Error('Network response was not ok');
+            if (inputs["type"] !== 1) {
+                showError("仅支持 OpenAI 接口格式");
+                return;
             }
     
-            // 将响应数据转为 JSON
-            const data = await response.json();
+            let url;
+            let headers = {};
+            let modelIds;
     
-            // 提取所有模型的 id
-            const modelIds = data.data.map(model => model.id);
+            if (isEdit) {
+                url = `/api/channel/fetch_models/${channelId}`;
+                const response = await fetch(url, { headers });
     
-            // 更新状态，只存储模型的 id
-            setInputs(inputs => ({...inputs, models: modelIds}));
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+    
+                const responseData = await response.json();
+    
+                // 检查编辑模式下的响应数据结构
+                if (!responseData.data || !responseData.data.data || !Array.isArray(responseData.data.data)) {
+                    throw new Error('Invalid data format');
+                }
+    
+                modelIds = responseData.data.data.map(model => model.id);
+            } else {
+                if (!inputs.key) {
+                    showError("请填写密钥");
+                    return;
+                }
+                const baseUrl = inputs.base_url
+                    ? (inputs.base_url.endsWith('/') ? inputs.base_url.slice(0, -1) : inputs.base_url)
+                    : 'https://api.openai.com';
+                url = `${baseUrl}/v1/models`;
+                headers = {
+                    'Authorization': `Bearer ${inputs.key}`
+                };
+    
+                const response = await fetch(url, { headers });
+    
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+    
+                const data = await response.json();
+    
+                if (!data.data || !Array.isArray(data.data)) {
+                    throw new Error('Invalid data format');
+                }
+    
+                modelIds = data.data.map(model => model.id);
+            }
+    
+            setInputs(prevInputs => ({
+                ...prevInputs, 
+                models: Array.from(new Set([...prevInputs.models, ...modelIds]))
+            }));
+    
+            showSuccess("获取模型列表成功");
         } catch (error) {
-            showError(error)
+            showError(`获取模型列表失败: ${error.message}`);
         }
     };
     
@@ -210,8 +280,14 @@ const EditChannel = (props) => {
             if (data.model_mapping !== '') {
                 data.model_mapping = JSON.stringify(JSON.parse(data.model_mapping), null, 2);
             }
+            if (data.status_code_mapping !== '') {
+                data.status_code_mapping = JSON.stringify(JSON.parse(data.status_code_mapping), null, 2);
+            }
             if (data.headers !== '') {
                 data.headers = JSON.stringify(JSON.parse(data.headers), null, 2);
+            }
+            if (data.gcp_account !== '') {
+                data.gcp_account = JSON.stringify(JSON.parse(data.gcp_account), null, 2);
             }
             setInputs(data);
             if (data.config !== '') {
@@ -232,6 +308,8 @@ const EditChannel = (props) => {
             setWeight(data.weight || 0);
             setRateLimited(data.rate_limited || false);
             setIstools(data.is_tools || false);
+            setClaudeOriginalRequest(data.claude_original_request || false);
+            setRateLimitedConut(data.rate_limit_count || 0);
             // console.log(data);
         } else {
             showError(message);
@@ -241,20 +319,33 @@ const EditChannel = (props) => {
 
     const fetchModels = async () => {
         try {
-            let res = await API.get(`/api/channel/models`);
-            let localModelOptions = res.data.data.map((model) => ({
-                label: model.id,
-                value: model.id
+            let res = await API.get(`/api/channel/models`);    
+            const groupedModels = res.data.data.reduce((acc, model) => {
+                if (!acc[model.owned_by]) {
+                    acc[model.owned_by] = [];
+                }
+                acc[model.owned_by].push({ label: model.id, value: model.id });
+                return acc;
+            }, {});
+    
+            const localModelOptions = Object.entries(groupedModels).map(([owner, models]) => ({
+                label: owner,
+                options: models,
             }));
+    
             setOriginModelOptions(localModelOptions);
+    
             setFullModels(res.data.data.map((model) => model.id));
-            setBasicModels(res.data.data.filter((model) => {
-                return model.id.startsWith('gpt-3') || model.id.startsWith('gpt-4') || model.id.startsWith('text-');
-            }).map((model) => model.id));
+    
+            setBasicModels(res.data.data
+                .filter((model) => model.id.startsWith('gpt-3') || model.id.startsWith('gpt-4') || model.id.startsWith('text-'))
+                .map((model) => model.id)
+            );
         } catch (error) {
             showError(error.message);
         }
     };
+    
 
     const fetchGroups = async () => {
         try {
@@ -268,9 +359,26 @@ const EditChannel = (props) => {
         }
     };
 
+    const handleGeminiModelChange = (value) => {
+        handleConfigChange({ name: 'gemini_model', value: value.join(',') });
+    };
+
+    const resetGeminiModels = () => {
+        handleConfigChange({ name: 'gemini_model', value: DEFAULT_GEMINI_MODELS.join(',') });
+    };
+
     useEffect(() => {
         setModelOptions(originModelOptions);
     }, [originModelOptions]);
+
+    useEffect(() => {
+        if (inputs.type === 24 && !config.gemini_model) {
+            setConfig(prevConfig => ({
+                ...prevConfig,
+                gemini_model: DEFAULT_GEMINI_MODELS.join(',')
+            }));
+        }
+    }, [inputs.type, config.gemini_model]);
     
 
     useEffect(() => {
@@ -300,8 +408,16 @@ const EditChannel = (props) => {
             showInfo('模型映射必须是合法的 JSON 格式！');
             return;
         }
+        if (inputs.status_code_mapping !== '' && !verifyJSON(inputs.status_code_mapping)) {
+            showInfo('状态码必须是合法的 JSON 格式！');
+            return;
+        }
         if (inputs.headers !== '' && !verifyJSON(inputs.headers)) {
             showInfo('自定义请求头必须是合法的 JSON 格式！');
+            return;
+        }
+        if (inputs.gcp_account !== '' && !verifyJSON(inputs.gcp_account)) {
+            showInfo('密钥文件必须是合法的 JSON 格式！');
             return;
         }
         if (config.ak !== '' && config.sk !== '' && config.region !== '') {
@@ -316,7 +432,8 @@ const EditChannel = (props) => {
         localInputs.rate_limited = rateLimited;
         localInputs.is_tools = istools;
         localInputs.is_image_url_enabled = isimageurenabled ? 1 : 0;
-        
+        localInputs.claude_original_request = claudeoriginalrequest;
+        localInputs.rate_limit_count = rateLimitedConut;
         if (localInputs.base_url && localInputs.base_url.endsWith('/')) {
             localInputs.base_url = localInputs.base_url.slice(0, localInputs.base_url.length - 1);
         }
@@ -353,6 +470,9 @@ const EditChannel = (props) => {
                 weight: parseInt(weight, 10) || 0, 
                 rate_limited: rateLimited,
                 is_tools: istools,
+                proxy_url: inputs.proxy_url,
+                claude_original_request: claudeoriginalrequest,
+                rate_limit_count: parseInt(rateLimitedConut, 10) || 0, 
             };
             });
     
@@ -409,13 +529,20 @@ const EditChannel = (props) => {
     };
     
     const addCustomModel = () => {
-        if (customModel.trim() === '') return;                // 确保自定义模型非空
-        if (inputs.models.includes(customModel)) return;      // 确保未重复添加
+        if (customModel.trim() === '') return;
     
-        // 更新输入模型数组（无需修改选项，除非确实需要显示新模型）
-        handleInputChange('models', [...inputs.models, customModel]);
+        // 将输入按逗号分割，并去除每个模型名称的前后空格
+        const newModels = customModel.split(',').map(model => model.trim()).filter(model => model !== '');
+    
+        // 过滤掉已存在的模型
+        const uniqueNewModels = newModels.filter(model => !inputs.models.includes(model));
+    
+        if (uniqueNewModels.length === 0) return; // 如果没有新的唯一模型，直接返回
+    
+        // 更新输入模型数组
+        handleInputChange('models', [...inputs.models, ...uniqueNewModels]);
         
-        // 清空自定义模型输入（重置自定义模型输入字段）
+        // 清空自定义模型输入
         setCustomModel('');
     };
 
@@ -441,6 +568,19 @@ const EditChannel = (props) => {
                 width={isMobile() ? '100%' : 600}
             >
                 <Spin spinning={loading}>
+                    <div style={{marginTop: 10}}>
+                         <Typography.Text strong>标签：</Typography.Text>
+                     </div>
+                     <Input
+                         label='标签'
+                         name='tags'
+                         placeholder={'请输入标签名称'}
+                         onChange={value => {
+                             handleInputChange('tags', value)
+                         }}
+                         value={inputs.tags}
+                     autoComplete='new-password'
+                     />
                     <div style={{marginTop: 10}}>
                         <Typography.Text strong>类型：</Typography.Text>
                     </div>
@@ -527,7 +667,7 @@ const EditChannel = (props) => {
                         autoComplete='new-password'
                     />
                     {
-                        inputs.type !== 3 && inputs.type !== 35 && inputs.type !== 8 && inputs.type !== 22 && (
+                        inputs.type !== 3 && inputs.type !== 35 && inputs.type !== 8 && inputs.type !== 22 && inputs.type !== 42 && (
                             <>
                                 <div style={{marginTop: 10}}>
                                     <Typography.Text strong>代理：</Typography.Text>
@@ -546,7 +686,7 @@ const EditChannel = (props) => {
                         )
                     }
                     {
-                        inputs.type !== 35 && (
+                        inputs.type !== 35 && inputs.type !== 42 && (
                             <div>
                                 <div style={{marginTop: 10}}>
                                     <Typography.Text strong>密钥：</Typography.Text>
@@ -583,7 +723,7 @@ const EditChannel = (props) => {
                     
 
                     {
-                       inputs.type !== 35 &&  !isEdit && (
+                       inputs.type !== 35 && inputs.type !== 42 &&  !isEdit && (
                             <div style={{marginTop: 10, display: 'flex'}}>
                                 <Space>
                                     <Checkbox
@@ -615,6 +755,33 @@ const EditChannel = (props) => {
                         autoComplete='new-password'
                         optionList={groupOptions}
                     />
+                    {
+                        inputs.type === 24 && (
+                            <>
+                                <div style={{marginTop: 10}}>
+                                    <Typography.Text strong>模型版本（需要v1beta的模型）：</Typography.Text>
+                                </div>
+                                <TagInput
+                                    style={{ width: '100%', marginTop: '10px' }}
+                                    placeholder='请输入需要v1beta的模型，按回车添加'
+                                    value={(config.gemini_model || DEFAULT_GEMINI_MODELS.join(',')).split(',')}
+                                    onChange={handleGeminiModelChange}
+                                    onInputConfirm={(text) => {
+                                        const currentModels = (config.gemini_model || '').split(',').filter(Boolean);
+                                        if (!currentModels.includes(text)) {
+                                            handleGeminiModelChange([...currentModels, text]);
+                                        }
+                                    }}
+                                />
+                                <Button 
+                                    style={{ marginTop: '10px' }}
+                                    onClick={resetGeminiModels}
+                                >
+                                    重置为默认模型
+                                </Button>
+                            </>
+                        )
+                    }
                     {
                         inputs.type === 18 && (
                             <>
@@ -703,44 +870,52 @@ const EditChannel = (props) => {
                         <Typography.Text strong>模型：</Typography.Text>
                     </div>
                     <Select
-                        placeholder={'请选择该渠道所支持的模型'}
-                        name='models'
-                        required
-                        multiple
-                        selection
-                        onChange={value => {
-                            handleInputChange('models', value)
-                        }}
-                        value={inputs.models}
-                        autoComplete='new-password'
-                        optionList={modelOptions}
-                    />
-                    <div style={{lineHeight: '40px', marginBottom: '12px'}}>
-                        <Space>
+                    placeholder={'请选择该渠道所支持的模型'}
+                    name='models'
+                    required
+                    multiple
+                    selection
+                    onChange={value => {
+                        handleInputChange('models', value)
+                    }}
+                    value={inputs.models}
+                    autoComplete='new-password'
+                    style={{ width: '100%' }}
+                >
+                    {modelOptions.map(group => (
+                        <Select.OptGroup key={group.label} label={group.label}>
+                            {group.options.map(model => (
+                                <Select.Option key={model.value} value={model.value}>
+                                    {model.label}
+                                </Select.Option>
+                            ))}
+                        </Select.OptGroup>
+                    ))}
+                </Select>
+                <div style={{lineHeight: '40px', marginBottom: '12px'}}>
+                    <Space>
                         <Button type='primary' onClick={() => {
-                                handleInputChange('models', basicModels);
-                            }}>填入基础模型</Button>
-                            <Button type='tertiary' onClick={() => {
-                                handleGetModels('models', basicModels);
-                            }}>填入支持模型</Button>
-                            <Button type='secondary' onClick={() => {
-                                handleInputChange('models', fullModels);
-                            }}>填入所有模型</Button>
-                            <Button type='warning' onClick={() => {
-                                handleInputChange('models', []);
-                            }}>清除所有模型</Button>
-                        </Space>
-                        <Input
-                            addonAfter={
-                                <Button type='primary' onClick={addCustomModel}>填入</Button>
-                            }
-                            placeholder='输入自定义模型名称'
-                            value={customModel}
-                            onChange={(value) => {
-                                setCustomModel(value);
-                            }}
-                        />
-                    </div>
+                            handleInputChange('models', basicModels);
+                        }}>填入基础模型</Button>
+                        <Button type='tertiary' onClick={() => {
+                            handleGetModels('models', basicModels);
+                        }}>填入支持模型</Button>
+                        <Button type='secondary' onClick={() => {
+                            handleInputChange('models', fullModels);
+                        }}>填入所有模型</Button>
+                        <Button type='warning' onClick={() => {
+                            handleInputChange('models', []);
+                        }}>清除所有模型</Button>
+                    </Space>
+                    <Input
+                        addonAfter={
+                            <Button type='primary' onClick={addCustomModel}>填入</Button>
+                        }
+                        placeholder='输入自定义模型名称，多个用逗号分隔'
+                        value={customModel}
+                        onChange={setCustomModel}
+                    />
+                </div>
                     <div style={{marginTop: 10}}>
                         <Typography.Text strong>模型重定向：</Typography.Text>
                     </div>
@@ -765,7 +940,36 @@ const EditChannel = (props) => {
                     }>
                         填入模板
                     </Typography.Text>
-                    
+                    <div style={{ marginTop: 10 }}>
+                        <Typography.Text strong>
+                        状态码复写（仅影响本地判断，不修改返回到上游的状态码）：
+                        </Typography.Text>
+                    </div>
+                    <TextArea
+                        placeholder={`此项可选，用于复写返回的状态码，比如将claude渠道的400错误复写为500（用于重试），请勿滥用该功能，例如：\n${JSON.stringify(STATUS_CODE_MAPPING_EXAMPLE, null, 2)}`}
+                        name='status_code_mapping'
+                        onChange={(value) => {
+                        handleInputChange('status_code_mapping', value);
+                        }}
+                        autosize
+                        value={inputs.status_code_mapping}
+                        autoComplete='new-password'
+                    />
+                    <Typography.Text
+                        style={{
+                        color: 'rgba(var(--semi-blue-5), 1)',
+                        userSelect: 'none',
+                        cursor: 'pointer',
+                        }}
+                        onClick={() => {
+                        handleInputChange(
+                            'status_code_mapping',
+                            JSON.stringify(STATUS_CODE_MAPPING_EXAMPLE, null, 2),
+                        );
+                        }}
+                    >
+                        填入模板
+                    </Typography.Text>
                     {
                         inputs.type === 35 && (
                             <div> {/* 新增的包裹元素 */}
@@ -803,6 +1007,17 @@ const EditChannel = (props) => {
                                     value={config.sk}
                                     autoComplete='new-password'
                                 />
+                                <div style={{marginTop: 10}}>
+                                    <Typography.Text strong>AWS Cross：</Typography.Text>
+                                </div>
+                                <Input
+                                    label='Cross'
+                                    name='cross'
+                                    placeholder={'AWS eu or us'}
+                                    onChange={(value) => handleConfigChange({ name: 'cross', value })}
+                                    value={config.cross}
+                                    autoComplete='new-password'
+                                />
                             </div> // 新增的包裹元素的结束标签
                         )
                     }
@@ -823,9 +1038,72 @@ const EditChannel = (props) => {
                         </div>
                         )
                     }
-                    
                     {
-                        inputs.type !== 35 && (
+                        inputs.type === 42 && (
+                            <div> {/* 新增的包裹元素 */}
+                            
+                                <div style={{marginTop: 10}}>
+                                    <Typography.Text strong>client_id：</Typography.Text>
+                                </div>
+                                <Input
+                                    label='ClientId'
+                                    name='client_id'
+                                    placeholder={'client_id：'}
+                                    onChange={(value) => handleConfigChange({ name: 'client_id', value })}
+                                    value={config.client_id}
+                                    autoComplete='new-password'
+                                />
+                                <div style={{marginTop: 10}}>
+                                    <Typography.Text strong>client_secret：</Typography.Text>
+                                </div>
+                                <Input
+                                    label='ClientSecret'
+                                    name='client_secret'
+                                    placeholder={'client_secret'}
+                                    onChange={(value) => handleConfigChange({ name: 'client_secret', value })}
+                                    value={config.client_secret}
+                                    autoComplete='new-password'
+                                />
+                                <div style={{marginTop: 10}}>
+                                    <Typography.Text strong>project_id：</Typography.Text>
+                                </div>
+                                <Input
+                                    label='ProjectId'
+                                    name='project_id'
+                                    placeholder={'project_id'}
+                                    onChange={(value) => handleConfigChange({ name: 'project_id', value })}
+                                    value={config.project_id}
+                                    autoComplete='new-password'
+                                />
+                                 <div style={{marginTop: 10}}>
+                                    <Typography.Text strong>refresh_token：</Typography.Text>
+                                </div>
+                                <Input
+                                    label='RefreshToken'
+                                    name='refresh_token'
+                                    placeholder={'refresh_token'}
+                                    onChange={(value) => handleConfigChange({ name: 'refresh_token', value })}
+                                    value={config.refresh_token}
+                                    autoComplete='new-password'
+                                />
+                                <div style={{marginTop: 10}}>
+                                    <Typography.Text strong>JSON密钥文件:</Typography.Text>
+                                </div>
+                                <TextArea
+                                    placeholder={`填入JSON密钥文件内容`}
+                                    name='gcp_account'
+                                    onChange={value => {
+                                        handleInputChange('gcp_account', value)
+                                    }}
+                                    autosize
+                                    value={inputs.gcp_account}
+                                    autoComplete='new-password'
+                                />
+                            </div> // 新增的包裹元素的结束标签
+                        )
+                    }
+                    {
+                        inputs.type !== 35 && inputs.type !== 42 && (
                             <div> 
                             <div style={{marginTop: 10}}>
                                 <Typography.Text strong>组织：</Typography.Text>
@@ -860,8 +1138,19 @@ const EditChannel = (props) => {
                                 checked={rateLimited}
                                 onChange={() => setRateLimited(!rateLimited)}
                             />
-                            <Typography.Text strong>启用频率限制（开启后渠道每分钟限制三次）</Typography.Text>
+                            <Typography.Text strong>启用频率限制（每分钟限制）</Typography.Text>
                         </Space>
+                        <div >
+                            <AutoComplete
+                                style={{ width: '100%', marginTop: 8 }}
+                                placeholder={'延迟时间-毫秒'}
+                                onChange={(value) => setRateLimitedConut(Number(value))}
+                                onSelect={(value) => setRateLimitedConut(Number(value))}
+                                value={String(rateLimitedConut)} 
+                                autoComplete='off'
+                                type='number'
+                            />
+                        </div>
                     </div>
                     <div style={{marginTop: 10, display: 'flex'}}>
                         <Space>
@@ -885,7 +1174,19 @@ const EditChannel = (props) => {
                             </div>
                         )
                     }
-
+                     {
+                        ((inputs.type === 42) || (inputs.type === 14) || (inputs.type === 35))  && (
+                            <div style={{marginTop: 10, display: 'flex'}}>
+                                <Space>
+                                    <Checkbox
+                                        checked={claudeoriginalrequest}
+                                        onChange={() => setClaudeOriginalRequest(!claudeoriginalrequest)}
+                                    />
+                                    <Typography.Text strong>支持原始Claude请求</Typography.Text>
+                                </Space>
+                            </div>
+                        )
+                    }
                     <div style={{marginTop: 20, display: 'flex', alignItems: 'center'}}>
                         <div style={{flex: 1}}>
                                 <Typography.Text>优先级：</Typography.Text>
@@ -987,6 +1288,18 @@ const EditChannel = (props) => {
                             </>
                         )
                     }
+                     <div style={{marginTop: 10}}>
+                        <Typography.Text strong>HTTP 代理或 SOCKS5 </Typography.Text>
+                    </div>
+                    <Input
+                        name='proxy_url'
+                        placeholder={'http://127.0.0.1:8080 或者 socks5://127.0.0.1:8080'}
+                        onChange={value => {
+                            handleInputChange('proxy_url', value)
+                        }}
+                        value={inputs.proxy_url}
+                        autoComplete='new-password'
+                    />
 
                 </Spin>
             </SideSheet>

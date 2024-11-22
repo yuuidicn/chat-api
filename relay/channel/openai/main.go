@@ -17,9 +17,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func StreamHandler(c *gin.Context, resp *http.Response, relayMode int, modelName string, fixedContent string) (*model.ErrorWithStatusCode, string, int) {
+func StreamHandler(c *gin.Context, resp *http.Response, relayMode int, modelName string, fixedContent string) (*model.ErrorWithStatusCode, string, int, *model.Usage) {
 	responseText := ""
 	toolCount := 0
+	var usage *model.Usage
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Split(func(data []byte, atEOF bool) (advance int, token []byte, err error) {
 		if atEOF && len(data) == 0 {
@@ -37,7 +38,6 @@ func StreamHandler(c *gin.Context, resp *http.Response, relayMode int, modelName
 	stopChan := make(chan bool)
 
 	go func() {
-		var stopMessage string
 		var needInjectFixedContent = false // 标志是否需要注入固定内容
 
 		for scanner.Scan() {
@@ -75,10 +75,13 @@ func StreamHandler(c *gin.Context, resp *http.Response, relayMode int, modelName
 								responseText += common.AsString(tool.Function.Arguments)
 							}
 						}
-						if choice.FinishReason != nil && *choice.FinishReason == "stop" {
+						if choice.FinishReason != nil && *choice.FinishReason == "stop" && fixedContent != "" {
 							needInjectFixedContent = true // 需要注入fixedContent
-							stopMessage = data
 						}
+
+					}
+					if streamResponse.Usage != nil && streamResponse.Usage.TotalTokens != 0 {
+						usage = streamResponse.Usage
 					}
 
 				case constant.RelayModeCompletions:
@@ -90,9 +93,8 @@ func StreamHandler(c *gin.Context, resp *http.Response, relayMode int, modelName
 					}
 					for _, choice := range streamResponse.Choices {
 						responseText += choice.Text
-						if choice.FinishReason == "stop" {
+						if choice.FinishReason == "stop" && fixedContent != "" {
 							needInjectFixedContent = true // 需要注入fixedContent
-							stopMessage = data
 						}
 					}
 				}
@@ -110,9 +112,6 @@ func StreamHandler(c *gin.Context, resp *http.Response, relayMode int, modelName
 		if needInjectFixedContent && fixedContent != "" {
 			fixedContentMessage := GenerateFixedContentMessage(fixedContent, modelName)
 			dataChan <- fixedContentMessage
-		} else {
-			// 发送暂存的停止消息
-			dataChan <- stopMessage
 		}
 
 		// 最后发送结束信号
@@ -136,9 +135,9 @@ func StreamHandler(c *gin.Context, resp *http.Response, relayMode int, modelName
 	})
 	err := resp.Body.Close()
 	if err != nil {
-		return ErrorWrapper(err, "close_response_body_failed", http.StatusInternalServerError), "", 0
+		return ErrorWrapper(err, "close_response_body_failed", http.StatusInternalServerError), "", 0, nil
 	}
-	return nil, responseText, toolCount
+	return nil, responseText, toolCount, usage
 }
 
 func Handler(c *gin.Context, resp *http.Response, promptTokens int, modelName string) (*model.ErrorWithStatusCode, *model.Usage, string) {
@@ -163,7 +162,7 @@ func Handler(c *gin.Context, resp *http.Response, promptTokens int, modelName st
 			StatusCode: resp.StatusCode,
 		}, nil, ""
 	}
-	if strings.HasPrefix(modelName, "gpt") {
+	if strings.HasPrefix(modelName, "gpt") || strings.HasPrefix(modelName, "o1") || strings.HasPrefix(modelName, "chatgpt") {
 		for _, choice := range textResponse.Choices {
 			responseText = choice.Message.StringContent()
 		}

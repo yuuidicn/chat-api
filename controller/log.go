@@ -59,13 +59,37 @@ func GetUserLogs(c *gin.Context) {
 		})
 		return
 	}
+
+	// 转换日志结果到 UserLogResponse 结构体
+	var responseLogs []model.UserLogResponse
+	for _, log := range logs {
+		responseLog := model.UserLogResponse{
+			Id:               log.Id,
+			UserId:           log.UserId,
+			CreatedAt:        log.CreatedAt,
+			Type:             log.Type,
+			Username:         log.Username,
+			TokenName:        log.TokenName,
+			ModelName:        log.ModelName,
+			Quota:            log.Quota,
+			PromptTokens:     log.PromptTokens,
+			CompletionTokens: log.CompletionTokens,
+			TokenId:          log.TokenId,
+			UseTime:          log.UseTime,
+			IsStream:         log.IsStream,
+			Multiplier:       log.Multiplier,
+			UserQuota:        log.UserQuota,
+			Ip:               log.Ip,
+		}
+		responseLogs = append(responseLogs, responseLog)
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data":    logs,
+		"data":    responseLogs,
 		"total":   total, // 返回总记录数
 	})
-	return
 }
 
 func SearchAllLogs(c *gin.Context) {
@@ -247,4 +271,27 @@ func DeleteHistoryLogs(c *gin.Context) {
 		"data":    count,
 	})
 	return
+}
+
+func SearchHourlylogs(c *gin.Context) {
+	userID := c.GetInt("id")
+	tokenName := c.Query("token_name")
+	modelName := c.Query("model_name")
+	startTimestamp := c.Query("start_timestamp")
+	endTimestamp := c.Query("end_timestamp")
+
+	hourlyStats, modelStats, err := model.SearchHourlyAndModelStats(userID, tokenName, modelName, startTimestamp, endTimestamp)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success":     true,
+		"message":     "",
+		"hourly_data": hourlyStats,
+		"model_data":  modelStats,
+	})
 }

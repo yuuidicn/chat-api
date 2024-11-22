@@ -113,6 +113,7 @@ func GetTokenStatus(c *gin.Context) {
 
 func AddToken(c *gin.Context) {
 	token := model.Token{}
+	userId := c.GetInt("id")
 	err := c.ShouldBindJSON(&token)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
@@ -127,6 +128,26 @@ func AddToken(c *gin.Context) {
 			"message": "令牌名称过长",
 		})
 		return
+	}
+	if token.Group != "" {
+		role := model.GetRole(userId)
+		if role < 10 {
+			if _, exists := common.GroupUserRatio[token.Group]; !exists {
+				c.JSON(http.StatusOK, gin.H{
+					"success": false,
+					"message": "无效的用户组",
+				})
+				return
+			}
+		} else {
+			if _, exists := common.GroupRatio[token.Group]; !exists {
+				c.JSON(http.StatusOK, gin.H{
+					"success": false,
+					"message": "无效的用户组",
+				})
+				return
+			}
+		}
 	}
 	cleanToken := model.Token{
 		UserId:         c.GetInt("id"),
@@ -194,6 +215,26 @@ func UpdateToken(c *gin.Context) {
 			"message": "令牌名称过长",
 		})
 		return
+	}
+	if token.Group != "" {
+		role := model.GetRole(userId)
+		if role < 10 {
+			if _, exists := common.GroupUserRatio[token.Group]; !exists {
+				c.JSON(http.StatusOK, gin.H{
+					"success": false,
+					"message": "无效的用户组",
+				})
+				return
+			}
+		} else {
+			if _, exists := common.GroupRatio[token.Group]; !exists {
+				c.JSON(http.StatusOK, gin.H{
+					"success": false,
+					"message": "无效的用户组",
+				})
+				return
+			}
+		}
 	}
 	cleanToken, err := model.GetTokenByIds(token.Id, userId)
 	if err != nil {

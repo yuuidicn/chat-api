@@ -141,7 +141,9 @@ func getPromptTokens(textRequest *relaymodel.GeneralOpenAIRequest, relayMode int
 			}
 
 		}
-		return openai.CountTokenChatRequest(textRequest.Messages, textRequest.Model)
+		return openai.CountTokenChatRequest(textRequest, textRequest.Model)
+	case constant.RelayModeMessages:
+		return openai.CountTokenChatRequest(textRequest, textRequest.Model)
 	case constant.RelayModeCompletions:
 		return openai.CountTokenInput(textRequest.Prompt, textRequest.Model)
 	case constant.RelayModeModerations:
@@ -156,9 +158,10 @@ func preConsumeQuota(ctx context.Context, preConsumedQuota int, meta *util.Relay
 		return preConsumedQuota, openai.ErrorWrapper(err, "get_user_quota_failed", http.StatusInternalServerError)
 	}
 	if userQuota-preConsumedQuota < 0 {
+		logger.Errorf(ctx, "userID #%d user quota is not enough", meta.UserId)
 		return preConsumedQuota, openai.ErrorWrapper(errors.New("user quota is not enough"), "insufficient_user_quota", http.StatusForbidden)
 	}
-	err = model.CacheDecreaseUserQuota(meta.UserId, preConsumedQuota)
+	err = model.CacheDecreaseUserQuota(ctx, meta.UserId, preConsumedQuota)
 	if err != nil {
 		return preConsumedQuota, openai.ErrorWrapper(err, "decrease_user_quota_failed", http.StatusInternalServerError)
 	}
@@ -170,7 +173,6 @@ func preConsumeQuota(ctx context.Context, preConsumedQuota int, meta *util.Relay
 	}
 	if preConsumedQuota > 0 {
 		logger.Info(ctx, fmt.Sprintf("用户%d 额度 %d，预扣费 %d", meta.UserId, userQuota, preConsumedQuota))
-
 		err := model.PreConsumeTokenQuota(meta.TokenId, preConsumedQuota)
 		if err != nil {
 			return preConsumedQuota, openai.ErrorWrapper(err, "pre_consume_token_quota_failed", http.StatusForbidden)
@@ -197,10 +199,6 @@ func postConsumeQuota(ctx context.Context, usage *relaymodel.Usage, meta *util.R
 	if err != nil {
 		openai.ErrorWrapper(err, "get_user_quota_failed", http.StatusInternalServerError)
 	}
-	token, err := model.GetTokenById(meta.TokenId)
-	if err != nil {
-		log.Println("获取token出错:", err)
-	}
 	BillingByRequestEnabled, _ := strconv.ParseBool(config.OptionMap["BillingByRequestEnabled"])
 	ModelRatioEnabled, _ := strconv.ParseBool(config.OptionMap["ModelRatioEnabled"])
 	modelRatioString := ""
@@ -210,36 +208,18 @@ func postConsumeQuota(ctx context.Context, usage *relaymodel.Usage, meta *util.R
 	completionTokens := usage.CompletionTokens
 	quota = promptTokens + int(float64(completionTokens)*completionRatio)
 
-	if BillingByRequestEnabled && ModelRatioEnabled {
-		if token.BillingEnabled {
-			modelRatio2, ok := common.GetModelRatio2(textRequest.Model)
-			if !ok {
-				quota = int(float64(quota) * ratio)
-				modelRatioString = fmt.Sprintf("模型倍率 %.2f，补全倍率%.2f", modelRatio, completionRatio)
-			} else {
-				groupRatio := common.GetGroupRatio(meta.Group)
+	modelRatioString = fmt.Sprintf("模型倍率 %.2f，补全倍率%.2f", modelRatio, completionRatio)
+	quota = int(float64(quota) * ratio)
+	if BillingByRequestEnabled {
+		shouldUseModelRatio2 := !ModelRatioEnabled || (ModelRatioEnabled && meta.BillingEnabled)
+		if shouldUseModelRatio2 {
+			modelRatio2, ok := common.GetModelRatio2(meta.OriginModelName)
+			if ok {
 				ratio = modelRatio2 * groupRatio
 				quota = int(ratio * config.QuotaPerUnit)
 				modelRatioString = "按次计费"
 			}
-		} else {
-			quota = int(float64(quota) * ratio)
-			modelRatioString = fmt.Sprintf("模型倍率 %.2f，补全倍率%.2f", modelRatio, completionRatio)
 		}
-	} else if BillingByRequestEnabled {
-		modelRatio2, ok := common.GetModelRatio2(textRequest.Model)
-		if !ok {
-			quota = int(float64(quota) * ratio)
-			modelRatioString = fmt.Sprintf("模型倍率 %.2f，补全倍率%.2f", modelRatio, completionRatio)
-		} else {
-			groupRatio := common.GetGroupRatio(meta.Group)
-			ratio = modelRatio2 * groupRatio
-			quota = int(ratio * config.QuotaPerUnit)
-			modelRatioString = "按次计费"
-		}
-	} else {
-		quota = int(float64(quota) * ratio)
-		modelRatioString = fmt.Sprintf("模型倍率 %.2f，补全倍率%.2f", modelRatio, completionRatio)
 	}
 	if ratio != 0 && quota <= 0 {
 		quota = 1
@@ -274,7 +254,7 @@ func postConsumeQuota(ctx context.Context, usage *relaymodel.Usage, meta *util.R
 	if err != nil {
 		logger.Error(ctx, "error consuming token remain quota: "+err.Error())
 	}
-	err = model.CacheDecreaseUserQuota(meta.UserId, quotaDelta)
+	err = model.CacheDecreaseUserQuota(ctx, meta.UserId, quotaDelta)
 	if err != nil {
 		logger.Error(ctx, "decrease_user_quota_failed"+err.Error())
 	}
@@ -288,7 +268,7 @@ func postConsumeQuota(ctx context.Context, usage *relaymodel.Usage, meta *util.R
 		logContent += fmt.Sprintf("，模型 %s", textRequest.Model)
 	}
 	if quota != 0 {
-		model.RecordConsumeLog(ctx, meta.UserId, meta.ChannelId, meta.ChannelName, promptTokens, completionTokens, textRequest.Model, meta.TokenName, quota, logContent, meta.TokenId, multiplier, userQuota, int(duration), meta.IsStream)
+		model.RecordConsumeLog(ctx, meta.UserId, meta.ChannelId, meta.ChannelName, promptTokens, completionTokens, textRequest.Model, meta.TokenName, quota, logContent, meta.TokenId, multiplier, userQuota, int(duration), meta.IsStream, meta.AttemptsLog, meta.RelayIp)
 		model.UpdateUserUsedQuotaAndRequestCount(meta.UserId, quota)
 		model.UpdateChannelUsedQuota(meta.ChannelId, quota)
 	}
@@ -296,6 +276,9 @@ func postConsumeQuota(ctx context.Context, usage *relaymodel.Usage, meta *util.R
 }
 func isErrorHappened(meta *util.RelayMeta, resp *http.Response) bool {
 	if resp == nil {
+		if meta.ChannelType == common.ChannelTypeAwsClaude {
+			return false
+		}
 		return true
 	}
 	if resp.StatusCode != http.StatusOK {
@@ -309,4 +292,20 @@ func isErrorHappened(meta *util.RelayMeta, resp *http.Response) bool {
 		return true
 	}
 	return false
+}
+
+func determineActualStatusCode(statusCode int, errorMessage string) int {
+	// 使用正则表达式匹配 "StatusCode: XXX" 模式
+	re := regexp.MustCompile(`StatusCode:\s*(\d+)`)
+	matches := re.FindStringSubmatch(errorMessage)
+
+	if len(matches) > 1 {
+		// 提取状态码
+		if actualStatusCode, err := strconv.Atoi(matches[1]); err == nil {
+			return actualStatusCode
+		}
+	}
+
+	// 如果没有匹配到或解析失败，返回原始状态码
+	return statusCode
 }

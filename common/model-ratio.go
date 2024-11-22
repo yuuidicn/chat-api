@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	USD2RMB = 7
+	USD2RMB = 7.3
 	USD     = 500 // $0.002 = 1 -> $1 = 500
 	RMB     = USD / USD2RMB
 )
@@ -26,8 +26,17 @@ var ModelRatio = map[string]float64{
 	"gpt-4-turbo":             5, // $0.01 / 1K tokens
 	"gpt-4-turbo-2024-04-09":  5, // $0.01 / 1K tokens
 	"gpt-4-vision-preview":    5, // $0.01 / 1K tokens
-	"gpt-4o":                  2.5,
+	"gpt-4o":                  1.25,
 	"gpt-4o-2024-05-13":       2.5,
+	"gpt-4o-mini":             0.075,
+	"gpt-4o-mini-2024-07-18":  0.075,
+	"gpt-4o-2024-08-06":       1.25,
+	"gpt-4o-2024-11-20":       1.25,
+	"chatgpt-4o-latest":       2.5,
+	"o1-preview":              7.5,
+	"o1-preview-2024-09-12":   7.5,
+	"o1-mini":                 1.5,
+	"o1-mini-2024-09-12":      1.5,
 	"gpt-3.5-turbo":           0.25, // $0.0005 / 1K tokens
 	"gpt-3.5-turbo-0301":      0.75,
 	"gpt-3.5-turbo-0613":      0.75,
@@ -63,12 +72,14 @@ var ModelRatio = map[string]float64{
 	"dall-e-2":                8,  // $0.016 - $0.020 / image
 	"dall-e-3":                20, // $0.040 - $0.120 / image
 	// https://www.anthropic.com/api#pricing
-	"claude-instant-1.2":       0.8 / 1000 * USD,
-	"claude-2.0":               8.0 / 1000 * USD,
-	"claude-2.1":               8.0 / 1000 * USD,
-	"claude-3-haiku-20240307":  0.25 / 1000 * USD,
-	"claude-3-sonnet-20240229": 3.0 / 1000 * USD,
-	"claude-3-opus-20240229":   15.0 / 1000 * USD,
+	"claude-instant-1.2":         0.8 / 1000 * USD,
+	"claude-2.0":                 8.0 / 1000 * USD,
+	"claude-2.1":                 8.0 / 1000 * USD,
+	"claude-3-haiku-20240307":    0.25 / 1000 * USD,
+	"claude-3-sonnet-20240229":   3.0 / 1000 * USD,
+	"claude-3-opus-20240229":     15.0 / 1000 * USD,
+	"claude-3-5-sonnet-20240620": 3.0 / 1000 * USD,
+	"claude-3-5-sonnet-20241022": 3.0 / 1000 * USD,
 	// https://cloud.baidu.com/doc/WENXINWORKSHOP/s/hlrk4akp7
 	"ERNIE-4.0-8K":       0.120 * RMB,
 	"ERNIE-3.5-8K":       0.012 * RMB,
@@ -93,6 +104,12 @@ var ModelRatio = map[string]float64{
 	"gemini-1.0-pro-vision-001": 1,
 	"gemini-1.0-pro-001":        1,
 	"gemini-1.5-pro":            1,
+	"gemini-1.5-pro-exp-0801":   1,
+	"gemini-1.5-pro-exp-0827":   1,
+	"gemini-1.5-flash-exp-0827": 1,
+	"gemini-1.5-pro-002":        1,
+	"gemini-1.5-flash-002":      1,
+	"gemini-exp-1114":           1,
 	// https://open.bigmodel.cn/pricing
 	"glm-4":                     0.1 * RMB,
 	"glm-4v":                    0.1 * RMB,
@@ -312,10 +329,22 @@ func GetCompletionRatio(name string) float64 {
 		return 4.0 / 3.0
 	}
 	if strings.HasPrefix(name, "gpt-4") {
-		if strings.HasSuffix(name, "preview") || strings.Contains(name, "turbo") || strings.Contains(name, "4o") {
+		if strings.HasSuffix(name, "preview") || strings.Contains(name, "turbo") {
 			return 3
 		}
+		if strings.HasPrefix(name, "gpt-4o") {
+			if name == "gpt-4o-2024-05-13" {
+				return 3
+			}
+			return 4
+		}
 		return 2
+	}
+	if strings.HasPrefix(name, "o1-") {
+		return 4
+	}
+	if strings.HasPrefix(name, "chatgpt-4o") {
+		return 3
 	}
 	if strings.HasPrefix(name, "claude-3") {
 		return 5
@@ -327,6 +356,9 @@ func GetCompletionRatio(name string) float64 {
 		return 3
 	}
 	if strings.HasPrefix(name, "gemini-") {
+		if strings.Contains(name, "flash") {
+			return 4
+		}
 		return 3
 	}
 	if strings.HasPrefix(name, "command-") && strings.HasSuffix(name, "-internet") {

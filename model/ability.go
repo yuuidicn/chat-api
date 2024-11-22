@@ -16,20 +16,22 @@ import (
 )
 
 type Ability struct {
-	Group     string `json:"group" gorm:"type:varchar(64);primaryKey;autoIncrement:false"`
-	Model     string `json:"model" gorm:"type:varchar(64);primaryKey;autoIncrement:false"`
-	ChannelId int    `json:"channel_id" gorm:"primaryKey;autoIncrement:false;index"`
-	Enabled   bool   `json:"enabled"`
-	Priority  *int64 `json:"priority" gorm:"bigint;default:0;index"`
-	Weight    uint   `json:"weight" gorm:"default:0;index"`
-	IsTools   *bool  `json:"is_tools" gorm:"default:true"`
+	Group                 string `json:"group" gorm:"type:varchar(64);primaryKey;autoIncrement:false"`
+	Model                 string `json:"model" gorm:"type:varchar(64);primaryKey;autoIncrement:false"`
+	ChannelId             int    `json:"channel_id" gorm:"primaryKey;autoIncrement:false;index"`
+	Enabled               bool   `json:"enabled"`
+	Priority              *int64 `json:"priority" gorm:"bigint;default:0;index"`
+	Weight                uint   `json:"weight" gorm:"default:0;index"`
+	IsTools               *bool  `json:"is_tools" gorm:"default:true"`
+	ClaudeOriginalRequest *bool  `json:"claude_original_request" gorm:"default:false"`
 }
 
 type ModelBillingInfo struct {
-	Model           string  `json:"model"`
-	ModelRatio      float64 `json:"model_ratio"`      // ModelRatio中的值
-	ModelPrice      float64 `json:"model_ratio_2"`    // ModelPrice中的值（如果有的话）
-	CalculatedRatio float64 `json:"calculated_ratio"` // 计算后的比率
+	Model                string  `json:"model"`
+	ModelType            string  `json:"model_type"`
+	ModelRatio           float64 `json:"model_ratio"` // ModelRatio中的值
+	ModeCompletionlRatio float64 `json:"model_completion_ratio"`
+	ModelPrice           float64 `json:"model_ratio_2"` // ModelPrice中的值（如果有的话）
 }
 
 type ModelRatios map[string]float64
@@ -50,31 +52,32 @@ func GetGroupModels(group string) ([]string, error) {
 	return models, err
 }
 
-func GetGroupModelsBilling(group string) ([]ModelBillingInfo, error) {
+func GetGroupModelsBilling(group string, search string) ([]ModelBillingInfo, error) {
 	var models []string
-	// 获取所有模型名称
 	groupCol := "`group`"
 	if common.UsingPostgreSQL {
 		groupCol = `"group"`
 	}
 
-	err := DB.Table("abilities").Where(groupCol+" = ? and enabled = ?", group, true).Distinct("model").Pluck("model", &models).Error
+	query := DB.Table("abilities").Where(groupCol+" = ? and enabled = ?", group, true)
+	if search != "" {
+		query = query.Where("model LIKE ?", "%"+search+"%")
+	}
+	err := query.Distinct("model").Pluck("model", &models).Error
 	if err != nil {
 		return nil, err
 	}
 
-	// 查询options表获取ModelRatio和ModelPrice的值
 	var options []struct {
 		Key   string
 		Value string
 	}
 
-	err = DB.Table("options").Where("`key` IN (?)", []string{"ModelRatio", "ModelPrice"}).Find(&options).Error
+	err = DB.Table("options").Where("`key` IN (?)", []string{"ModelRatio", "CompletionRatio", "ModelPrice"}).Find(&options).Error
 	if err != nil {
 		return nil, err
 	}
 
-	// 解析ModelRatio 和 ModelPrice 的值
 	modelRatio := make(ModelRatios)
 	if len(modelRatio) == 0 {
 		jsonStr := config.OptionMap["ModelRatio"]
@@ -83,9 +86,10 @@ func GetGroupModelsBilling(group string) ([]ModelBillingInfo, error) {
 		}
 		err := json.Unmarshal([]byte(jsonStr), &modelRatio)
 		if err != nil {
-			return nil, fmt.Errorf("error unmarshalling ModelRatio from common: %v", err)
+			return nil, fmt.Errorf("error unmarshalling ModelRatio: %v", err)
 		}
 	}
+
 	ModelPrice := make(ModelRatios)
 	var defaultModelPrice float64
 	var hasDefault bool
@@ -100,7 +104,6 @@ func GetGroupModelsBilling(group string) ([]ModelBillingInfo, error) {
 			modelRatio = ratios
 		} else if option.Key == "ModelPrice" {
 			ModelPrice = ratios
-			// 尝试获取ModelPrice的默认值
 			if defaultRatio, ok := ratios["default"]; ok {
 				defaultModelPrice = defaultRatio
 				hasDefault = true
@@ -112,13 +115,11 @@ func GetGroupModelsBilling(group string) ([]ModelBillingInfo, error) {
 		Key   string
 		Value string
 	}
-	var groupRatioValue float64 = 1
+	groupRatioValue := 1.0
 	err = DB.Table("options").Where("`key` = ?", "GroupRatio").First(&groupOption).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		// 如果记录未找到，则将相关变量设置为默认值 1
-		groupRatioValue = 1
+		groupRatioValue = 1.0
 	} else if err != nil {
-		// 如果有其他错误，则返回错误
 		return nil, err
 	}
 
@@ -128,7 +129,6 @@ func GetGroupModelsBilling(group string) ([]ModelBillingInfo, error) {
 		if err != nil {
 			return nil, err
 		}
-		// 获取 group 对应的 ratio，如果没有特定于组的比率则使用默认值
 		if val, ok := groupRatio[group]; ok {
 			groupRatioValue = val
 		}
@@ -137,34 +137,35 @@ func GetGroupModelsBilling(group string) ([]ModelBillingInfo, error) {
 	var modelsBillingInfos []ModelBillingInfo
 
 	for _, model := range models {
+		// 计算模型完成率
+		modelCompletionRatio := common.GetCompletionRatio(model)
+
 		var modelInfo ModelBillingInfo
 
-		// 查找ModelRatio和ModelPrice的值
 		if model != "midjourney" {
 			if ratio, exists := modelRatio[model]; exists {
 				modelInfo.ModelRatio = ratio * groupRatioValue
+				modelInfo.ModeCompletionlRatio = modelInfo.ModelRatio * modelCompletionRatio
 			} else {
-				// 如果ModelRatio不存在，使用默认值15
 				modelInfo.ModelRatio = 15 * groupRatioValue
+				modelInfo.ModeCompletionlRatio = modelInfo.ModelRatio * modelCompletionRatio
 			}
 		}
 
 		if ratio, exists := ModelPrice[model]; exists {
 			modelInfo.ModelPrice = ratio * groupRatioValue
 		} else if hasDefault {
-			// 如果ModelPrice不存在但有默认值，则使用此默认值
 			modelInfo.ModelPrice = defaultModelPrice * groupRatioValue
 		} else {
-			// 如果ModelPrice不存在并且没有默认值，则设置为0
 			modelInfo.ModelPrice = 0
 		}
 
 		modelInfo.Model = model
+		// 不在这里设置 ModelType
 		modelsBillingInfos = append(modelsBillingInfos, modelInfo)
 	}
 
 	return modelsBillingInfos, nil
-
 }
 
 var channelRateLimitStatus sync.Map // 存储每个 Channel 的频率限制状态
@@ -180,7 +181,17 @@ type ChannelModelKey struct {
 	Model     string
 }
 
-func checkRateLimit(channelId int, model string) (*ChannelRateLimit, bool) {
+func isRateLimited(channel Channel, channelId int, model string) bool {
+	if (channel.RateLimited != nil && *channel.RateLimited) && (channel.RateLimitCount != nil && *channel.RateLimitCount > 0) {
+		if _, ok := checkRateLimit(&channel, channelId, model); !ok {
+			return true
+		}
+		updateRateLimitStatus(channelId, model)
+	}
+	return false
+}
+
+func checkRateLimit(channel *Channel, channelId int, model string) (*ChannelRateLimit, bool) {
 	now := time.Now()
 	key := ChannelModelKey{ChannelID: channelId, Model: model}
 
@@ -201,7 +212,7 @@ func checkRateLimit(channelId int, model string) (*ChannelRateLimit, bool) {
 		rl.Count = 1
 		rl.ResetTime = now.Add(time.Minute)
 		return rl, true
-	} else if rl.Count < 5 {
+	} else if rl.Count <= (int64(*channel.RateLimitCount) + 1) {
 		rl.Count++
 		return rl, true
 	}
@@ -234,13 +245,13 @@ func updateRateLimitStatus(channelId int, model string) {
 	channelRateLimitStatus.Store(key, rl)
 }
 
-func GetRandomSatisfiedChannel(group string, model string, ignoreFirstPriority bool, isTools bool, i int) (*Channel, error) {
+func GetRandomSatisfiedChannel(group string, model string, excluded map[int]struct{}, ignoreFirstPriority bool, isTools bool, claudeoriginalrequest bool, i int) (*Channel, error) {
 	// 当i等于1时，强制使用下一个优先级
 	if i == 1 {
 		return getChannelFromNextPriority(group, model)
 	}
 
-	abilities, err := getAbilitiesByPriority(group, model, ignoreFirstPriority, isTools)
+	abilities, err := getAbilitiesByPriority(group, model, ignoreFirstPriority, isTools, claudeoriginalrequest, excluded)
 	if err != nil {
 		return nil, err
 	}
@@ -276,7 +287,7 @@ func GetRandomSatisfiedChannel(group string, model string, ignoreFirstPriority b
 	return getChannelFromNextPriority(group, model)
 }
 
-func getAbilitiesByPriority(group string, model string, ignoreFirstPriority bool, isTools bool) ([]Ability, error) {
+func getAbilitiesByPriority(group string, model string, ignoreFirstPriority bool, isTools bool, claudeoriginalrequest bool, excluded map[int]struct{}) ([]Ability, error) {
 	var abilities []Ability
 	groupCol := "`group`"
 	trueVal := "1"
@@ -290,10 +301,26 @@ func getAbilitiesByPriority(group string, model string, ignoreFirstPriority bool
 		maxPrioritySubQuery := DB.Model(&Ability{}).Select("MAX(priority)").Where(groupCol+" = ? and model = ? and enabled = "+trueVal, group, model)
 		channelQuery = channelQuery.Where("priority = (?)", maxPrioritySubQuery)
 	}
+	conditions := []string{}
 	if isTools {
-		channelQuery = channelQuery.Where("is_tools = true")
+		conditions = append(conditions, "is_tools = true")
+	}
+	if claudeoriginalrequest {
+		conditions = append(conditions, "claude_original_request = true")
+	}
+	if len(conditions) > 0 {
+		combinedCondition := "(" + strings.Join(conditions, " OR ") + ")"
+		channelQuery = channelQuery.Where(combinedCondition)
+	}
+	// 将 excluded 映射到一个切片
+	excludedIds := make([]int, 0, len(excluded))
+	for id := range excluded {
+		excludedIds = append(excludedIds, id)
 	}
 
+	if len(excludedIds) > 0 {
+		channelQuery = channelQuery.Where("channel_id NOT IN (?)", excludedIds)
+	}
 	err := channelQuery.Order("weight DESC").Find(&abilities).Error
 	if err != nil {
 		return nil, err
@@ -324,16 +351,6 @@ func getRandomWeightedIndex(abilities []Ability) (int, error) {
 
 func removeAbility(abilities []Ability, index int) []Ability {
 	return append(abilities[:index], abilities[index+1:]...)
-}
-
-func isRateLimited(channel Channel, channelId int, model string) bool {
-	if channel.RateLimited != nil && *channel.RateLimited {
-		if _, ok := checkRateLimit(channelId, model); !ok {
-			return true
-		}
-		updateRateLimitStatus(channelId, model)
-	}
-	return false
 }
 
 func getChannelFromNextPriority(group string, model string) (*Channel, error) {
@@ -398,13 +415,14 @@ func (channel *Channel) AddAbilities() error {
 	for _, model := range models_ {
 		for _, group := range groups_ {
 			ability := Ability{
-				Group:     group,
-				Model:     model,
-				ChannelId: channel.Id,
-				Enabled:   channel.Status == common.ChannelStatusEnabled,
-				Priority:  channel.Priority,
-				Weight:    uint(channel.GetWeight()),
-				IsTools:   channel.IsTools,
+				Group:                 group,
+				Model:                 model,
+				ChannelId:             channel.Id,
+				Enabled:               channel.Status == common.ChannelStatusEnabled,
+				Priority:              channel.Priority,
+				Weight:                uint(channel.GetWeight()),
+				IsTools:               channel.IsTools,
+				ClaudeOriginalRequest: channel.ClaudeOriginalRequest,
 			}
 			abilities = append(abilities, ability)
 		}

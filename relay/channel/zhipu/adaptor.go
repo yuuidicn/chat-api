@@ -54,11 +54,11 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Request, meta *ut
 	return nil
 }
 
-func (a *Adaptor) ConvertRequest(c *gin.Context, relayMode int, request *model.GeneralOpenAIRequest) (any, error) {
+func (a *Adaptor) ConvertRequest(c *gin.Context, meta *util.RelayMeta, request *model.GeneralOpenAIRequest) (any, error) {
 	if request == nil {
 		return nil, errors.New("request is nil")
 	}
-	switch relayMode {
+	switch meta.Mode {
 	case constant.RelayModeEmbeddings:
 		baiduEmbeddingRequest, err := ConvertEmbeddingRequest(*request)
 		return baiduEmbeddingRequest, err
@@ -88,7 +88,7 @@ func (a *Adaptor) DoResponseV4(c *gin.Context, resp *http.Response, meta *util.R
 	if meta.IsStream {
 		var responseText string
 		var toolCount int
-		err, responseText, toolCount = openai.StreamHandler(c, resp, meta.Mode, meta.ActualModelName, meta.FixedContent)
+		err, responseText, toolCount, usage = openai.StreamHandler(c, resp, meta.Mode, meta.ActualModelName, meta.FixedContent)
 		aitext = responseText
 		usage = openai.ResponseText2Usage(responseText, meta.ActualModelName, meta.PromptTokens)
 		usage.CompletionTokens += toolCount * 7
