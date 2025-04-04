@@ -16,27 +16,56 @@ import {
   InputLabel,
   TextField,
   Button,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
   Box,
-  Alert
+  Alert,
+  Tabs,
+  Tab
 } from '@mui/material';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import SearchIcon from '@mui/icons-material/Search';
 import ModelTableHead from './component/TableHead';
 import { API } from 'utils/api';
 import { useTheme } from '@mui/material/styles';
+import { PaidOutlined } from '@mui/icons-material';
+import { 
+  OpenAI,          // OpenAI
+  Claude,          // Anthropic Claude
+  Gemini,          // Google Gemini
+  DeepSeek,        // deepseek
+  Zhipu,           // 智谱 AI
+  Hunyuan,         // 腾讯混元
+  Spark,           // 讯飞星火
+  Minimax,         // MiniMax
+  Yi,              // 零一万物
+  Groq,            // Groq
+  Ollama,          // Ollama
+  Doubao,          // 豆包
+  Ai360,          // 360 AI
+  Midjourney ,     // Midjourney
+  Flux,
+  Grok,
+  Suno,
+  Pika,
+  Vidu,
+  Volcengine,
+  Bedrock,
+  Stability,
+  BaiduCloud,
+  AlibabaCloud,
+  Cohere,
+  Baichuan,
+  Kimi 
+} from '@lobehub/icons';
+
 function formatNumber(num) {
   if (num % 1 !== 0) {
-      const decimalPart = num.toString().split('.')[1];
-      if (decimalPart.length > 5) {
-          return num.toFixed(5);
-      } else {
-          return num;
-      }
-  } else {
+    const decimalPart = num.toString().split('.')[1];
+    if (decimalPart.length > 5) {
+      return num.toFixed(5);
+    } else {
       return num;
+    }
+  } else {
+    return num;
   }
 }
 
@@ -47,7 +76,8 @@ export default function Log() {
   const [selectedGroup, setSelectedGroup] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [currentSearchTerm, setCurrentSearchTerm] = useState('');
-  
+  const [activeTab, setActiveTab] = useState('');
+
   const loadGroups = async () => {
       try {
           let res = await API.get('/api/user/group');
@@ -76,15 +106,13 @@ export default function Log() {
       if (params.toString()) url += `?${params.toString()}`;
 
       let res = await API.get(url);
-      const { success, message, data } = res.data;
+      const { success, data } = res.data;
       if (success && Array.isArray(data)) {
         setModels(data);
       } else {
-        showError(message);
         setModels([]);
       }
     } catch (err) {
-      showError(err.message);
       setModels([]);
     }
   };
@@ -113,10 +141,19 @@ export default function Log() {
   const groupModelsByType = (models) => {
     const groupedModels = {};
     models.forEach(model => {
-      if (!groupedModels[model.model_type]) {
-        groupedModels[model.model_type] = [];
+      let modelType = model.model_type;
+      
+      // 根据模型名称重新分类
+      if (model.model.startsWith('o1-')|| model.model.startsWith('o3-')) {
+        modelType = 'OpenAI';
+      } else if (model.model.startsWith('gemini')) {
+        modelType = 'Google Gemini';
       }
-      groupedModels[model.model_type].push(model);
+      
+      if (!groupedModels[modelType]) {
+        groupedModels[modelType] = [];
+      }
+      groupedModels[modelType].push(model);
     });
     return groupedModels;
   };
@@ -133,11 +170,159 @@ export default function Log() {
   };
   const groupedModels = sortModelTypes(groupModelsByType(models));
   const hasModels = Object.keys(groupedModels).length > 0;
+
+  // 获取排序后的模型类型列表
+  const modelTypes = Object.keys(groupedModels);
+  
+  // 在搜索或切换分组时，如果当前选中的tab不在新的模型类型列表中，需要重置activeTab
+  useEffect(() => {
+    const modelTypes = Object.keys(groupedModels);
+    if (modelTypes.length > 0) {
+      if (!modelTypes.includes(activeTab)) {
+        setActiveTab(modelTypes[0]);
+      }
+    } else {
+      setActiveTab('');
+    }
+  }, [groupedModels, activeTab]);
+
+  const getModelIcon = (modelInfo) => {
+    const { model_type, model } = modelInfo;
+    
+    // 只有 OpenAI 相关模型使用 Avatar
+    if (model_type === 'OpenAI') {
+      if (model.startsWith('gpt-3')) {
+        return <OpenAI.Avatar size={20} type="gpt3" />;
+      } else if (model.startsWith('gpt-4') || model.startsWith('chatgpt')) {
+        return <OpenAI.Avatar size={20} type="gpt4" />;
+      } else if (model.startsWith('o1') || model.startsWith('o3')) {
+        return <OpenAI.Avatar size={20} type="o1" />;
+      }
+      return <OpenAI.Avatar size={20} />;
+    }
+
+    // 其他模型使用普通图标
+    switch (model_type) {
+      case 'Anthropic Claude':
+        return <Claude.Color size={20} />;
+      case 'google gemini':
+        return <Gemini.Color size={20} />;
+      case 'deepseek':
+        return <DeepSeek.Color size={20} />;
+      case 'zhipu':
+        return <Zhipu.Color size={20} />;
+      case 'tencent':
+        return <Hunyuan.Color size={20} />;
+      case '讯飞星火':
+        return <Spark.Color size={20} />;
+      case 'minimax':
+        return <Minimax.Color size={20} />;
+      case 'moonshot':
+        return <Kimi.Color size={20} />;
+      case '零一万物':
+        return <Yi.Color size={20} />;
+      case 'groq':
+        return <Groq size={20} />;
+      case 'Ollama':
+        return <Ollama size={20} />;
+      case 'doubao':
+        return <Doubao.Color size={20} />;
+      case '360 AI':
+        return <Ai360.Color size={20} />;
+      case 'Midjourney':
+        return <Midjourney size={20} />;
+      case 'Flux':
+        return <Flux size={20} />;
+      case 'Grok':
+        return <Grok size={20} />;
+      case 'Suno':
+        return <Suno size={20} />;
+      case 'Pika':
+        return <Pika size={20} />;
+      case 'Vidu':
+        return <Vidu.Color size={20} />;
+      case 'baidu':
+        return <BaiduCloud.Color size={20} />;
+      case 'ali':
+        return <AlibabaCloud.Color size={20} />;
+      case 'Cohere':
+        return <Cohere.Color size={20} />;
+      case 'baichuan':
+        return <Baichuan.Color size={20} />;
+      case '360':
+        return <Ai360.Color size={20} />;
+      default:
+        return <OpenAI size={20} />;
+    }
+  };
+
+  // 添加一个获取类型图标的函数
+  const getTypeIcon = (modelType) => {
+    switch (modelType) {
+      case 'OpenAI':
+        return <OpenAI.Avatar size={16} />;
+      case 'Anthropic Claude':
+        return <Claude.Color size={16} />;
+      case 'Google Gemini':
+        return <Gemini.Color size={16} />;
+      case 'deepseek':
+        return <DeepSeek.Color size={16} />;
+      case '智谱 AI':
+        return <Zhipu.Color size={16} />;
+      case '腾讯混元':
+        return <Hunyuan.Color size={16} />;
+      case '讯飞星火':
+        return <Spark.Color size={16} />;
+      case 'MiniMax':
+        return <Minimax.Color size={16} />;
+      case 'moonshot':
+        return <Kimi.Color size={16} />;
+      case '零一万物':
+        return <Yi.Color size={16} />;
+      case 'Groq':
+        return <Groq size={16} />;
+      case 'Ollama':
+        return <Ollama size={16} />;
+      case '豆包':
+        return <Doubao.Color size={16} />;
+      case '360 AI':
+        return <Ai360.Color size={16} />;
+      case 'Midjourney':
+        return <Midjourney size={16} />;
+      case 'Flux':
+        return <Flux size={16} />;
+      case 'Grok':
+        return <Grok size={16} />;
+      case 'Suno':
+        return <Suno size={16} />;
+      case 'Pika':
+        return <Pika size={16} />;
+      case 'Vidu':
+        return <Vidu.Color size={16} />;
+      case 'Volcengine':
+        return <Volcengine.Color size={16} />;
+      case 'Bedrock':
+        return <Bedrock.Color size={16} />;
+      case 'Stability':
+        return <Stability.Color size={16} />;
+      case 'Baidu':
+        return <BaiduCloud.Color size={16} />;
+      case 'Ali':
+        return <AlibabaCloud.Color size={16} />;
+      case 'Cohere':
+        return <Cohere.Color size={16} />;
+      case 'Baichuan':
+        return <Baichuan.Color size={16} />;
+      default:
+        return <OpenAI size={16} />;
+    }
+  };
+
   return (
     <Box sx={{ maxWidth: 1200, margin: 'auto', padding: 3 }}>
       <Alert severity="info">
         按次计费与按token计费同时存在 按次计费优先。
-        </Alert>
+      </Alert>
       <Stack direction="row" alignItems="center" mb={5} spacing={2}>
         <Typography variant="h4" sx={{ flexGrow: 1 }}>可用模型</Typography>
         <TextField 
@@ -182,61 +367,244 @@ export default function Log() {
       <Card elevation={3}>
         <TableContainer component={Paper}>
           {hasModels ? (
-            Object.entries(groupedModels).map(([modelType, models]) => (
-              <Accordion key={modelType} defaultExpanded>
-                <AccordionSummary
-                  expandIcon={<ExpandMoreIcon />}
-                  sx={{ 
+            <>
+              <Box sx={{ 
+                width: '100%',
+                overflowX: 'auto',
+                WebkitOverflowScrolling: 'touch',
+                msOverflowStyle: 'none',
+                scrollbarWidth: 'none',
+                '&::-webkit-scrollbar': {
+                  display: 'none'
+                }
+              }}>
+                <Tabs
+                  value={activeTab}
+                  onChange={(e, newValue) => setActiveTab(newValue)}
+                  variant="scrollable"
+                  scrollButtons="auto"
+                  sx={{
+                    borderBottom: 1,
+                    borderColor: 'divider',
                     backgroundColor: theme.palette.mode === 'light' 
                       ? theme.palette.grey[100] 
                       : theme.palette.grey[800],
-                    '&:hover': {
-                      backgroundColor: theme.palette.mode === 'light'
-                        ? theme.palette.grey[200]
-                        : theme.palette.grey[500],
-                    },
-                    '&.Mui-expanded': {
-                      minHeight: 48,
-                      maxHeight: 48,
-                    },
-                    '& .MuiAccordionSummary-content, & .MuiAccordionSummary-expandIconWrapper': {
-                      color: theme.palette.text.primary,
-                    }
+                    minHeight: 48,
                   }}
                 >
-                  <Typography variant="h6">{modelType}</Typography>
-                </AccordionSummary>
-                <AccordionDetails>
-                <Table size="small">
-                  <ModelTableHead />
-                  <TableBody>
-                    {models.map((modelInfo, index) => (
-                      <TableRow 
-                        key={index} 
-                        hover
-                      >
-                        <TableCell component="th" scope="row" align="left" sx={{ fontWeight: 'medium' }}>
-                          {modelInfo.model}
-                        </TableCell>
-                        <TableCell align="left">
-                          {modelInfo.model_ratio_2 !== undefined && modelInfo.model_ratio_2 !== 0 ?
-                            modelInfo.model_ratio_2.toFixed(3) : '无'}
-                        </TableCell>
-                        <TableCell align="left">
-                          {modelInfo.model_ratio !== undefined && modelInfo.model_ratio !== 0 ?
-                            formatNumber(modelInfo.model_ratio * 0.002) : '无'}
-                        </TableCell>
-                        <TableCell align="left">
-                          {modelInfo.model_ratio !== undefined && modelInfo.model_ratio !== 0 ?
-                            formatNumber(modelInfo.model_completion_ratio * 0.002) : '无'}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-                </AccordionDetails>
-              </Accordion>
-            ))
+                  {modelTypes.map((modelType) => (
+                    <Tab 
+                      key={modelType}
+                      label={
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          {getTypeIcon(modelType)}
+                          {modelType}
+                        </Box>
+                      }
+                      value={modelType}
+                    />
+                  ))}
+                </Tabs>
+              </Box>
+              
+              {activeTab && groupedModels[activeTab] && (
+                <Box sx={{ 
+                  width: '100%',
+                  overflowX: 'auto',
+                  WebkitOverflowScrolling: 'touch',
+                  msOverflowStyle: 'none',
+                  scrollbarWidth: 'none',
+                  '&::-webkit-scrollbar': {
+                    display: 'none'
+                  }
+                }}>
+                  <Table size="small" sx={{ 
+                    minWidth: 800,
+                    '@media (max-width: 600px)': {
+                      minWidth: 600
+                    },
+                    '& .MuiTableCell-root': {
+                      padding: '12px 16px',  // 统一的内边距
+                    }
+                  }}>
+                    <ModelTableHead />
+                    <TableBody>
+                      {groupedModels[activeTab].map((modelInfo, index) => (
+                        <TableRow 
+                          key={index} 
+                          hover
+                          sx={{
+                            '&:nth-of-type(odd)': {
+                              backgroundColor: theme.palette.mode === 'light' 
+                                ? 'rgba(0, 0, 0, 0.02)' 
+                                : 'rgba(255, 255, 255, 0.02)'
+                            },
+                            // 最后一行添加底部边框
+                            '&:last-child td, &:last-child th': {
+                              borderBottom: 0
+                            }
+                          }}
+                        >
+                          <TableCell 
+                            component="th" 
+                            scope="row" 
+                            align="left"
+                            sx={{ 
+                              fontWeight: 500,
+                              color: theme.palette.primary.main,
+                              textAlign: 'left'
+                            }}
+                          >
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                              {getModelIcon(modelInfo)}
+                              {modelInfo.model}
+                            </Box>
+                          </TableCell>
+                          <TableCell 
+                            align="right"
+                            sx={{ 
+                              fontFamily: 'monospace'
+                            }}
+                          >
+                            {modelInfo.model_ratio_2 !== undefined && modelInfo.model_ratio_2 !== 0 ? (
+                              <Box
+                                component="span"
+                                sx={{
+                                  display: 'inline-block',
+                                  backgroundColor: 'rgba(250, 140, 22, 0.1)',
+                                  color: '#d46b08',
+                                  px: 2,
+                                  py: 0.5,
+                                  borderRadius: '12px',
+                                  fontSize: '0.875rem',
+                                  fontWeight: 600,
+                                  minWidth: '80px',
+                                  textAlign: 'center'
+                                }}
+                              >
+                                $ {modelInfo.model_ratio_2.toFixed(3)}
+                              </Box>
+                            ) : (
+                              <Box
+                                component="span"
+                                sx={{
+                                  display: 'inline-block',
+                                  backgroundColor: theme.palette.mode === 'light' ? 'rgba(0, 0, 0, 0.04)' : 'rgba(255, 255, 255, 0.08)',
+                                  color: theme.palette.text.secondary,
+                                  px: 2,
+                                  py: 0.5,
+                                  borderRadius: '12px',
+                                  fontSize: '0.875rem',
+                                  fontWeight: 600,
+                                  minWidth: '80px',
+                                  textAlign: 'center'
+                                }}
+                              >
+                                无
+                              </Box>
+                            )}
+                          </TableCell>
+                          <TableCell 
+                            align="right"
+                            sx={{ 
+                              fontFamily: 'monospace'
+                            }}
+                          >
+                            {modelInfo.model_ratio !== undefined && modelInfo.model_ratio !== 0 ? (
+                              <Box
+                                component="span"
+                                sx={{
+                                  display: 'inline-block',
+                                  backgroundColor: 'rgba(24, 144, 255, 0.1)',
+                                  color: '#096dd9',
+                                  px: 2,
+                                  py: 0.5,
+                                  borderRadius: '12px',
+                                  fontSize: '0.875rem',
+                                  fontWeight: 600,
+                                  minWidth: '80px',
+                                  textAlign: 'left'
+                                }}
+                              >
+                                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', gap: 0.5 }}>
+                                  <PaidOutlined fontSize="small" sx={{ color: '#096dd9' }}/>
+                                  {formatNumber(modelInfo.model_ratio * 2)}
+                                </Box>
+                              </Box>
+                            ) : (
+                              <Box
+                                component="span"
+                                sx={{
+                                  display: 'inline-block',
+                                  backgroundColor: theme.palette.mode === 'light' ? 'rgba(0, 0, 0, 0.04)' : 'rgba(255, 255, 255, 0.08)',
+                                  color: theme.palette.text.secondary,
+                                  px: 2,
+                                  py: 0.5,
+                                  borderRadius: '12px',
+                                  fontSize: '0.875rem',
+                                  fontWeight: 600,
+                                  minWidth: '80px',
+                                  textAlign: 'center'
+                                }}
+                              >
+                                无
+                              </Box>
+                            )}
+                          </TableCell>
+                          <TableCell 
+                            align="right"
+                            sx={{ 
+                              fontFamily: 'monospace'
+                            }}
+                          >
+                            {modelInfo.model_ratio !== undefined && modelInfo.model_ratio !== 0 ? (
+                              <Box
+                                component="span"
+                                sx={{
+                                  display: 'inline-block',
+                                  backgroundColor: 'rgba(82, 196, 26, 0.1)',
+                                  color: '#389e0d',
+                                  px: 2,
+                                  py: 0.5,
+                                  borderRadius: '12px',
+                                  fontSize: '0.875rem',
+                                  fontWeight: 600,
+                                  minWidth: '80px',
+                                  textAlign: 'left'
+                                }}
+                              >
+                                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 0.5 }}>
+                                  <PaidOutlined fontSize="small" sx={{ color: '#389e0d' }}/>
+                                  {formatNumber(modelInfo.model_completion_ratio * 2)}
+                                 </Box>
+                              </Box>
+                            ) : (
+                              <Box
+                                component="span"
+                                sx={{
+                                  display: 'inline-block',
+                                  backgroundColor: theme.palette.mode === 'light' ? 'rgba(0, 0, 0, 0.04)' : 'rgba(255, 255, 255, 0.08)',
+                                  color: theme.palette.text.secondary,
+                                  px: 2,
+                                  py: 0.5,
+                                  borderRadius: '12px',
+                                  fontSize: '0.875rem',
+                                  fontWeight: 600,
+                                  minWidth: '80px',
+                                  textAlign: 'center'
+                                }}
+                              >
+                                无
+                              </Box>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </Box>
+              )}
+            </>
           ) : (
             <Box sx={{ p: 3, textAlign: 'center' }}>
               <Typography variant="h6" color="text.secondary">

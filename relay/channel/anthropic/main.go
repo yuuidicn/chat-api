@@ -16,7 +16,14 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
+
+// Thinking 定义了 Claude 模型的思考功能配置
+type Thinking struct {
+	Type         string `json:"type"`
+	BudgetTokens int    `json:"budget_tokens"`
+}
 
 func stopReasonClaude2OpenAI(reason *string) string {
 	if reason == nil {
@@ -83,32 +90,30 @@ func createGenericError() *model.ErrorWithStatusCode {
 func ConvertRequest(textRequest model.GeneralOpenAIRequest) *Request {
 	claudeRequest := createBaseRequest(textRequest)
 	if len(textRequest.Tools) > 0 {
-		claudeRequest.Tools = convertToolsLegacy(textRequest.Tools)
-		claudeRequest.ToolChoice = convertToolChoice(textRequest.ToolChoice)
+		claudeRequest.Tools = ConvertToolsLegacy(textRequest.Tools)
+		claudeRequest.ToolChoice = ConvertToolChoice(textRequest.ToolChoice)
 	}
-	claudeRequest = applyLegacyModelMapping(claudeRequest)
-	claudeRequest.Messages = convertMessagesLegacy(textRequest.Messages, &claudeRequest.System)
+	claudeRequest = ApplyLegacyModelMapping(claudeRequest)
+	// 创建一个临时的 string 变量来存储 system 消息
+	var systemMessage string
+	claudeRequest.Messages = ConvertMessagesLegacy(textRequest.Messages, &systemMessage)
+	// 将转换后的 system 消息赋值给 claudeRequest.System
+	claudeRequest.System = systemMessage
 	return claudeRequest
 }
 
 func ConverClaudeRequest(request model.GeneralOpenAIRequest) *Request {
 	claudeRequest := createBaseRequest(request)
 	var err error
-	claudeRequest.Messages, err = convertMessages(request.Messages)
+	claudeRequest.Messages, err = ConvertMessages(request.Messages)
 	if err != nil {
 		return nil
 	}
 	if len(request.Tools) > 0 {
-		claudeRequest.Tools, err = convertTools(request.Tools)
-		if err != nil {
-			return nil
-		}
-		claudeRequest.ToolChoice = convertToolChoice(request.ToolChoice)
+		claudeRequest.Tools = ConvertTools(request.Tools)
+		claudeRequest.ToolChoice = ConvertToolChoice(request.ToolChoice)
 	}
 
-	if err != nil {
-		return nil
-	}
 	return claudeRequest
 }
 
@@ -119,10 +124,27 @@ func createBaseRequest(request model.GeneralOpenAIRequest) *Request {
 		Model:       request.Model,
 		MaxTokens:   request.MaxTokens,
 		Stream:      request.Stream,
+		Thinking:    request.Thinking,
 		Temperature: request.Temperature,
 		TopP:        request.TopP,
 		TopK:        request.TopK,
 		System:      request.System,
+	}
+	if strings.HasSuffix(request.Model, "-thinking") {
+
+		if claudeRequest.MaxTokens == 0 {
+			claudeRequest.MaxTokens = 8192
+		}
+
+		if claudeRequest.MaxTokens < 1280 {
+			claudeRequest.MaxTokens = 1280
+		}
+		claudeRequest.TopP = 0
+		claudeRequest.Thinking = &Thinking{
+			Type:         "enabled",
+			BudgetTokens: int(float64(claudeRequest.MaxTokens) * 0.8),
+		}
+		claudeRequest.Model = strings.TrimSuffix(request.Model, "-thinking")
 	}
 	if claudeRequest.MaxTokens == 0 {
 		claudeRequest.MaxTokens = 4096
@@ -130,7 +152,7 @@ func createBaseRequest(request model.GeneralOpenAIRequest) *Request {
 	return claudeRequest
 }
 
-func convertToolsLegacy(tools []model.Tool) []Tool {
+func ConvertToolsLegacy(tools []model.Tool) []Tool {
 	claudeTools := make([]Tool, 0, len(tools))
 	for _, tool := range tools {
 		if params, ok := tool.Function.Parameters.(map[string]any); ok {
@@ -148,52 +170,61 @@ func convertToolsLegacy(tools []model.Tool) []Tool {
 	return claudeTools
 }
 
-func convertTools(tools []model.Tool) ([]Tool, error) {
+func ConvertTools(tools []model.Tool) []Tool {
 	claudeTools := make([]Tool, 0, len(tools))
 	for _, tool := range tools {
-		params, ok := tool.Function.Parameters.(map[string]interface{})
-		if !ok {
-			return nil, fmt.Errorf("invalid parameters format in function")
+		// 不进行类型断言，直接转换
+		claudeTool := Tool{
+			Name:        tool.Name,
+			Description: tool.Description,
+			InputSchema: convertInputSchema(*tool.InputSchema),
 		}
-		toolType, ok := params["type"].(string)
-		if !ok {
-			return nil, fmt.Errorf("invalid tool type")
-		}
-		claudeTools = append(claudeTools, Tool{
-			Name:        tool.Function.Name,
-			Description: tool.Function.Description,
-			InputSchema: InputSchema{
-				Type:       toolType,
-				Properties: params["properties"],
-				Required:   params["required"],
-			},
-		})
+		claudeTools = append(claudeTools, claudeTool)
 	}
-	return claudeTools, nil
+	return claudeTools
 }
 
-func convertToolChoice(toolChoice any) struct {
-	Type string `json:"type"`
-	Name string `json:"name,omitempty"`
-} {
-	claudeToolChoice := struct {
-		Type string `json:"type"`
-		Name string `json:"name,omitempty"`
-	}{Type: "auto"}
+func convertInputSchema(modelSchema model.InputSchema) InputSchema {
+	return InputSchema{
+		Type:       modelSchema.Type,
+		Properties: modelSchema.Properties,
+		Required:   modelSchema.Required,
+	}
+}
 
-	if choice, ok := toolChoice.(map[string]any); ok {
-		if function, ok := choice["function"].(map[string]any); ok {
-			claudeToolChoice.Type = "tool"
-			claudeToolChoice.Name = function["name"].(string)
+func ConvertToolChoice(toolChoice any) map[string]interface{} {
+	claudeToolChoice := map[string]interface{}{
+		"type": "none",
+	}
+
+	switch v := toolChoice.(type) {
+	case string:
+		if v == "auto" || v == "any" {
+			claudeToolChoice["type"] = "tool_use"
 		}
-	} else if toolChoiceType, ok := toolChoice.(string); ok && toolChoiceType == "any" {
-		claudeToolChoice.Type = toolChoiceType
+	case map[string]any:
+		if function, ok := v["function"].(map[string]any); ok {
+			claudeToolChoice["type"] = "tool_use"
+			claudeToolChoice["name"] = function["name"].(string)
+
+			// 生成唯一 ID
+			toolUseId := "toolu_" + uuid.New().String()
+			claudeToolChoice["id"] = toolUseId
+
+			// 处理 arguments
+			if args, ok := function["arguments"].(string); ok {
+				var inputArgs map[string]interface{}
+				if err := json.Unmarshal([]byte(args), &inputArgs); err == nil {
+					claudeToolChoice["input"] = inputArgs
+				}
+			}
+		}
 	}
 
 	return claudeToolChoice
 }
 
-func applyLegacyModelMapping(request *Request) *Request {
+func ApplyLegacyModelMapping(request *Request) *Request {
 	switch request.Model {
 	case "claude-instant-1":
 		request.Model = "claude-instant-1.1"
@@ -204,110 +235,151 @@ func applyLegacyModelMapping(request *Request) *Request {
 }
 
 // 原有的 ConvertRequest 中的消息转换逻辑
-func convertMessagesLegacy(messages []model.Message, system *string) []Message {
-	formatMessages := make([]model.Message, 0)
-	var lastMessage *model.Message
-	for i, message := range messages {
-		if message.Role == "system" {
-			if i != 0 {
-				message.Role = "user"
-			}
-		}
-		if message.Role == "" {
-			message.Role = "user"
-		}
-
-		fmtMessage := model.Message{
-			Role:    message.Role,
-			Content: message.Content,
-		}
-
-		if lastMessage != nil && (lastMessage.Role == message.Role) &&
-			lastMessage.IsStringContent() && message.IsStringContent() {
-			content := strings.Trim(fmt.Sprintf("%s %s", lastMessage.StringContent(), message.StringContent()), "\"")
-			fmtMessage.Content = content
-
-			formatMessages = formatMessages[:len(formatMessages)-1]
-		}
-
-		if fmtMessage.Content == nil {
-			content, _ := json.Marshal("...")
-			fmtMessage.Content = content
-		}
-
-		formatMessages = append(formatMessages, fmtMessage)
-
-		lastMessage = &fmtMessage
-	}
-
+func ConvertMessagesLegacy(messages []model.Message, system *string) []Message {
 	var claudeMessages []Message
-	for _, message := range formatMessages {
-		if message.Role == "system" && *system == "" {
+	lastRole := ""
+
+	for _, message := range messages {
+		// Handle system message
+		if message.Role == "system" {
 			*system = message.StringContent()
 			continue
 		}
+
 		claudeMessage := Message{
 			Role: message.Role,
 		}
-		var content Content
-		if message.IsStringContent() {
-			content.Type = "text"
-			content.Text = message.StringContent()
-			if message.Role == "tool" {
-				claudeMessage.Role = "user"
-				content.Type = "tool_result"
-				content.Content = content.Text
-				content.Text = ""
-				content.ToolUseId = message.ToolCallId
-			}
-			claudeMessage.Content = append(claudeMessage.Content, content)
-			for i := range message.ToolCalls {
+
+		// Handle tool calls
+		if len(message.ToolCalls) > 0 {
+			claudeMessage.Role = "assistant"
+			for _, toolCall := range message.ToolCalls {
 				inputParam := make(map[string]any)
-				_ = json.Unmarshal([]byte(message.ToolCalls[i].Function.Arguments.(string)), &inputParam)
-				claudeMessage.Content = append(claudeMessage.Content, Content{
+				if args, ok := toolCall.Function.Arguments.(string); ok {
+					_ = json.Unmarshal([]byte(args), &inputParam)
+				}
+				claudeMessage.Content = []Content{{
 					Type:  "tool_use",
-					Id:    message.ToolCalls[i].Id,
-					Name:  message.ToolCalls[i].Function.Name,
+					Id:    toolCall.Id,
+					Name:  toolCall.Function.Name,
 					Input: inputParam,
-				})
+				}}
 			}
 			claudeMessages = append(claudeMessages, claudeMessage)
+			lastRole = "assistant"
 			continue
 		}
-		var contents []Content
-		openaiContent := message.ParseContent()
 
-		for _, part := range openaiContent {
-			var content Content
-			if part.Type == model.ContentTypeText {
-				content.Type = "text"
-				content.Text = part.Text
-			} else if part.Type == model.ContentTypeImageURL {
-				content.Type = "image"
-				content.Source = &ImageSource{
-					Type: "base64",
-				}
-				imageInfo, ok := part.ImageUrl.(model.MessageImageUrl)
-				if !ok {
-					log.Println("ImageUrl 类型断言失败")
-					return nil
-				}
-				mimeType, data, _ := image.GetImageFromUrl(imageInfo.Url)
-				content.Source.MediaType = mimeType
-				content.Source.Data = data
+		// Handle tool responses
+		if message.Role == "tool" {
+			if lastRole != "user" {
+				claudeMessages = append(claudeMessages, Message{
+					Role: "user",
+					Content: []Content{{
+						Type: "text",
+						Text: "_",
+					}},
+				})
 			}
-			contents = append(contents, content)
+
+			claudeMessage.Role = "assistant"
+			claudeMessage.Content = []Content{{
+				Type:      "tool_result",
+				Content:   message.StringContent(),
+				ToolUseId: message.ToolCallId,
+			}}
+			claudeMessages = append(claudeMessages, claudeMessage)
+			lastRole = "assistant"
+			continue
 		}
-		claudeMessage.Content = contents
-		claudeMessages = append(claudeMessages, claudeMessage)
+
+		// Handle regular messages
+		if message.Role == "" {
+			claudeMessage.Role = "user"
+		}
+
+		// Add intermediate message if needed
+		if lastRole == claudeMessage.Role && lastRole != "" {
+			intermediateRole := "assistant"
+			if lastRole == "assistant" {
+				intermediateRole = "user"
+			}
+			claudeMessages = append(claudeMessages, Message{
+				Role: intermediateRole,
+				Content: []Content{{
+					Type: "text",
+					Text: "_",
+				}},
+			})
+		}
+
+		// Handle message content
+		if message.IsStringContent() {
+			content := message.StringContent()
+			if content == "" {
+				content = "_"
+			}
+			claudeMessage.Content = []Content{{
+				Type: "text",
+				Text: content,
+			}}
+		} else if message.Content != nil {
+			var contents []Content
+			openaiContent := message.ParseContent()
+			for _, part := range openaiContent {
+				switch part.Type {
+				case model.ContentTypeText:
+					text := part.Text
+					if text == "" {
+						text = "_"
+					}
+					contents = append(contents, Content{
+						Type: "text",
+						Text: text,
+					})
+				case model.ContentTypeImageURL:
+					if imageInfo, ok := part.ImageUrl.(model.MessageImageUrl); ok {
+						mimeType, data, _ := image.GetImageFromUrl(imageInfo.Url)
+						contents = append(contents, Content{
+							Type: "image",
+							Source: &ImageSource{
+								Type:      "base64",
+								MediaType: mimeType,
+								Data:      data,
+							},
+						})
+					}
+				}
+			}
+			if len(contents) > 0 {
+				claudeMessage.Content = contents
+			}
+		}
+
+		if len(claudeMessage.Content) > 0 {
+			claudeMessages = append(claudeMessages, claudeMessage)
+			lastRole = claudeMessage.Role
+		}
 	}
+
+	// Ensure last message is from user
+	if len(claudeMessages) > 0 && lastRole != "user" {
+		claudeMessages = append(claudeMessages, Message{
+			Role: "user",
+			Content: []Content{{
+				Type: "text",
+				Text: "_",
+			}},
+		})
+	}
+
 	return claudeMessages
 }
 
 // 新的 ConverClaudeRequest 中的消息转换逻辑
-func convertMessages(messages []model.Message) ([]Message, error) {
+func ConvertMessages(messages []model.Message) ([]Message, error) {
+
 	var formatMessages []Message
-	var lastMessage *Message
 
 	for i, message := range messages {
 		// 处理角色
@@ -320,107 +392,160 @@ func convertMessages(messages []model.Message) ([]Message, error) {
 			message.Role = "user"
 		}
 
-		// 转换内容
-		claudeContent, err := convertContent(message.Content)
-		if err != nil {
-			return nil, fmt.Errorf("convert content error for message %d: %v", i, err)
+		// 转换 Content
+		var content []Content
+		switch v := message.Content.(type) {
+		case string:
+			content = []Content{{Type: "text", Text: v}}
+		case []interface{}:
+			for _, item := range v {
+				if c, ok := item.(map[string]interface{}); ok {
+					content = append(content, convertToContent(c))
+				}
+			}
+		case []Content:
+			content = v
+		default:
+			return nil, fmt.Errorf("unsupported content type for message %d", i)
 		}
 
 		fmtMessage := Message{
 			Role:    message.Role,
-			Content: claudeContent,
+			Content: content,
 		}
 
-		// 检查是否应该合并消息
-		if lastMessage != nil && (lastMessage.Role == fmtMessage.Role) &&
-			isStringContent(lastMessage.Content) && isStringContent(fmtMessage.Content) {
-			content := strings.Trim(fmt.Sprintf("%s %s", getStringContent(lastMessage.Content), getStringContent(fmtMessage.Content)), "\"")
-			fmtMessage.Content = []Content{{Type: "text", Text: content}}
-
-			// 删除上一条消息
-			formatMessages = formatMessages[:len(formatMessages)-1]
-		}
-
-		// 处理 Content 为空的情况
-		if len(fmtMessage.Content) == 0 {
-			fmtMessage.Content = []Content{{Type: "text", Text: "..."}}
-		}
-
-		// 添加新的或修改后的消息到列表
 		formatMessages = append(formatMessages, fmtMessage)
-
-		lastMessage = &fmtMessage // 更新 lastMessage 为当前处理的消息
 	}
-
 	return formatMessages, nil
 }
 
-func convertContent(content interface{}) ([]Content, error) {
-	switch c := content.(type) {
-	case string:
-		return []Content{{Type: "text", Text: c}}, nil
-	case []interface{}:
-		var claudeContents []Content
-		for _, item := range c {
-			if contentMap, ok := item.(map[string]interface{}); ok {
-				claudeContent := Content{
-					Type: contentMap["type"].(string),
-				}
-				if text, ok := contentMap["text"].(string); ok {
-					claudeContent.Text = text
-				}
-				if source, ok := contentMap["source"].(map[string]interface{}); ok {
-					claudeContent.Source = &ImageSource{
-						Type:      source["type"].(string),
-						MediaType: source["media_type"].(string),
-						Data:      source["data"].(string),
+func convertToContent(c map[string]interface{}) Content {
+	content := Content{}
+	for key, value := range c {
+		switch key {
+		case "type":
+			content.Type = value.(string)
+		case "text":
+			if text, ok := value.(string); ok {
+				content.Text = text
+			}
+		case "id":
+			content.Id = value.(string)
+		case "name":
+			content.Name = value.(string)
+		case "input":
+			content.Input = value
+		case "content":
+			if contentArray, ok := value.([]interface{}); ok {
+				var contentSlice []Content
+				for _, item := range contentArray {
+					if contentMap, ok := item.(map[string]interface{}); ok {
+						contentSlice = append(contentSlice, convertToContent(contentMap))
 					}
 				}
-				claudeContents = append(claudeContents, claudeContent)
+				content.Content = contentSlice
 			} else {
-				return nil, fmt.Errorf("invalid content item type")
+				content.Content = value
+			}
+		case "tool_use_id":
+			content.ToolUseId = value.(string)
+		case "tool_result":
+			if tr, ok := value.(map[string]interface{}); ok {
+				toolResult := &ToolResult{
+					ToolUseID: tr["tool_use_id"].(string),
+					Content:   []Content{},
+				}
+				if trc, ok := tr["content"].([]interface{}); ok {
+					for _, item := range trc {
+						if trci, ok := item.(map[string]interface{}); ok {
+							toolResult.Content = append(toolResult.Content, convertToContent(trci))
+						}
+					}
+				}
+				content.ToolResult = toolResult
+			}
+		case "source":
+			if sourceMap, ok := value.(map[string]interface{}); ok {
+				content.Source = &ImageSource{
+					Data:      sourceMap["data"].(string),
+					MediaType: sourceMap["media_type"].(string),
+					Type:      sourceMap["type"].(string),
+				}
 			}
 		}
-		return claudeContents, nil
-	default:
-		return nil, fmt.Errorf("unsupported content type")
 	}
-}
 
-// 辅助函数：检查内容是否为字符串
-func isStringContent(content []Content) bool {
-	return len(content) == 1 && content[0].Type == "text"
-}
-
-// 辅助函数：获取字符串内容
-func getStringContent(content []Content) string {
-	if isStringContent(content) {
-		return content[0].Text
-	}
-	return ""
+	return content
 }
 
 func ResponseClaude2OpenAI(claudeResponse *Response) *openai.TextResponse {
+
 	var responseText string
+	var toolCalls []model.Tool
+	var thinkingText string
+
+	// 处理 Content
 	if len(claudeResponse.Content) > 0 {
-		responseText = claudeResponse.Content[0].Text
+		for _, content := range claudeResponse.Content {
+			if content.Type == "text" {
+				responseText += content.Text
+			} else if content.Type == "tool_use" {
+				arguments, err := json.Marshal(content.Input)
+				if err != nil {
+					log.Printf("Error marshaling tool input: %v", err)
+					arguments = []byte("{}")
+				}
+				toolCall := model.Tool{
+					Id:   content.Id,
+					Type: "function",
+					Function: model.Function{
+						Name:      content.Name,
+						Arguments: string(arguments),
+					},
+				}
+				toolCalls = append(toolCalls, toolCall)
+			} else if content.Type == "thinking" {
+				// 处理思考内容
+				thinkingText = content.Thinking
+			}
+		}
 	}
+
+	// 如果有思考内容，添加到响应文本前面
+	if thinkingText != "" {
+		responseText = "<think>" + thinkingText + "</think>\n\n" + responseText
+	}
+
 	choice := openai.TextResponseChoice{
 		Index: 0,
 		Message: model.Message{
-			Role:    "assistant",
-			Content: responseText,
-			Name:    nil,
+			Role:      "assistant",
+			Content:   responseText,
+			Name:      nil,
+			ToolCalls: toolCalls,
 		},
 		FinishReason: stopReasonClaude2OpenAI(claudeResponse.StopReason),
 	}
+
+	// 生成默认ID如果不存在
+	responseId := claudeResponse.Id
+	if responseId == "" {
+		responseId = helper.GetUUID()
+	}
+
 	fullTextResponse := openai.TextResponse{
-		Id:      fmt.Sprintf("chatcmpl-%s", claudeResponse.Id),
+		Id:      fmt.Sprintf("chatcmpl-%s", responseId),
 		Model:   claudeResponse.Model,
 		Object:  "chat.completion",
 		Created: helper.GetTimestamp(),
 		Choices: []openai.TextResponseChoice{choice},
+		Usage: model.Usage{
+			PromptTokens:     claudeResponse.Usage.InputTokens,
+			CompletionTokens: claudeResponse.Usage.OutputTokens,
+			TotalTokens:      claudeResponse.Usage.InputTokens + claudeResponse.Usage.OutputTokens,
+		},
 	}
+
 	return &fullTextResponse
 }
 
@@ -429,16 +554,52 @@ func StreamResponseClaude2OpenAI(claudeResponse *StreamResponse) (*openai.ChatCo
 	var response *Response
 	var responseText string
 	var stopReason string
+	tools := make([]model.Tool, 0)
+
 	switch claudeResponse.Type {
 	case "message_start":
-		return nil, claudeResponse.Message
+		if claudeResponse.Message != nil {
+			response = &Response{
+				Usage: Usage{
+					InputTokens:  claudeResponse.Message.Usage.InputTokens,
+					OutputTokens: 0,
+				},
+			}
+		}
+		return nil, response
 	case "content_block_start":
 		if claudeResponse.ContentBlock != nil {
-			responseText = claudeResponse.ContentBlock.Text
+			if claudeResponse.ContentBlock.Type == "thinking" {
+				responseText = "<think>"
+			} else {
+				responseText = claudeResponse.ContentBlock.Text
+			}
+			if claudeResponse.ContentBlock.Type == "tool_use" {
+				tools = append(tools, model.Tool{
+					Id:   claudeResponse.ContentBlock.Id,
+					Type: "function",
+					Function: model.Function{
+						Name:      claudeResponse.ContentBlock.Name,
+						Arguments: "",
+					},
+				})
+			}
 		}
 	case "content_block_delta":
 		if claudeResponse.Delta != nil {
-			responseText = claudeResponse.Delta.Text
+			if claudeResponse.Delta.Type == "thinking_delta" {
+				responseText = claudeResponse.Delta.Thinking
+			} else if claudeResponse.Delta.Type == "signature_delta" {
+				responseText = "</think>\n\n"
+			} else if claudeResponse.Delta.Type == "text_delta" {
+				responseText = claudeResponse.Delta.Text
+			} else if claudeResponse.Delta.Type == "input_json_delta" {
+				tools = append(tools, model.Tool{
+					Function: model.Function{
+						Arguments: claudeResponse.Delta.PartialJson,
+					},
+				})
+			}
 		}
 	case "message_delta":
 		if claudeResponse.Usage != nil {
@@ -452,6 +613,10 @@ func StreamResponseClaude2OpenAI(claudeResponse *StreamResponse) (*openai.ChatCo
 	}
 	var choice openai.ChatCompletionsStreamResponseChoice
 	choice.Delta.Content = responseText
+	if len(tools) > 0 {
+		choice.Delta.Content = nil // compatible with other OpenAI derivative applications, like LobeOpenAICompatibleFactory ...
+		choice.Delta.ToolCalls = tools
+	}
 	choice.Delta.Role = "assistant"
 	finishReason := stopReasonClaude2OpenAI(&stopReason)
 	if finishReason != "null" {
@@ -461,30 +626,6 @@ func StreamResponseClaude2OpenAI(claudeResponse *StreamResponse) (*openai.ChatCo
 	openaiResponse.Object = "chat.completion.chunk"
 	openaiResponse.Choices = []openai.ChatCompletionsStreamResponseChoice{choice}
 	return &openaiResponse, response
-}
-
-func responseClaude2OpenAI(claudeResponse *Response) *openai.TextResponse {
-	var responseText string
-	if len(claudeResponse.Content) > 0 {
-		responseText = claudeResponse.Content[0].Text
-	}
-	choice := openai.TextResponseChoice{
-		Index: 0,
-		Message: model.Message{
-			Role:    "assistant",
-			Content: responseText,
-			Name:    nil,
-		},
-		FinishReason: stopReasonClaude2OpenAI(claudeResponse.StopReason),
-	}
-	fullTextResponse := openai.TextResponse{
-		Id:      fmt.Sprintf("chatcmpl-%s", claudeResponse.Id),
-		Model:   claudeResponse.Model,
-		Object:  "chat.completion",
-		Created: helper.GetTimestamp(),
-		Choices: []openai.TextResponseChoice{choice},
-	}
-	return &fullTextResponse
 }
 
 func StreamHandler(c *gin.Context, resp *http.Response) (*model.ErrorWithStatusCode, *model.Usage, string) {
@@ -529,6 +670,7 @@ func StreamHandler(c *gin.Context, resp *http.Response) (*model.ErrorWithStatusC
 	var modelName string
 	var id string
 	var streamError *model.ErrorWithStatusCode
+	var lastToolCallChoice openai.ChatCompletionsStreamResponseChoice
 	c.Stream(func(w io.Writer) bool {
 		select {
 		case data := <-dataChan:
@@ -544,15 +686,29 @@ func StreamHandler(c *gin.Context, resp *http.Response) (*model.ErrorWithStatusC
 			if meta != nil {
 				usage.PromptTokens += meta.Usage.InputTokens
 				usage.CompletionTokens += meta.Usage.OutputTokens
-				modelName = meta.Model
-				id = fmt.Sprintf("chatcmpl-%s", meta.Id)
-				return true
+				if len(meta.Id) > 0 { // only message_start has an id, otherwise it's a finish_reason event.
+					id = fmt.Sprintf("chatcmpl-%s", meta.Id)
+					return true
+				} else { // finish_reason case
+					ProcessToolCalls(&lastToolCallChoice, response)
+				}
 			}
 			if response == nil {
 				return true
 			}
-			responsePart := response.Choices[0].Delta.Content.(string)
-			responseTextBuilder.WriteString(responsePart)
+			if response != nil && len(response.Choices) > 0 {
+				choice := response.Choices[0]
+				if choice.Delta.Content != nil {
+					if content, ok := choice.Delta.Content.(string); ok {
+						responseTextBuilder.WriteString(content)
+					} else if content, ok := choice.Delta.Content.(map[string]interface{}); ok {
+						// 处理其他可能的内容类型
+						if textContent, exists := content["text"].(string); exists {
+							responseTextBuilder.WriteString(textContent)
+						}
+					}
+				}
+			}
 			response.Id = id
 			response.Model = modelName
 			response.Created = createdTime
@@ -565,7 +721,9 @@ func StreamHandler(c *gin.Context, resp *http.Response) (*model.ErrorWithStatusC
 			c.Render(-1, common.CustomEvent{Data: "data: " + string(jsonStr)})
 			return true
 		case <-stopChan:
-			c.Render(-1, common.CustomEvent{Data: "data: [DONE]"})
+			if responseTextBuilder.String() != "" {
+				c.Render(-1, common.CustomEvent{Data: "data: [DONE]"})
+			}
 			return false
 		case err := <-errorChan:
 			streamError = err
@@ -603,7 +761,7 @@ func Handler(c *gin.Context, resp *http.Response, promptTokens int, modelName st
 			StatusCode: resp.StatusCode,
 		}, nil, ""
 	}
-	fullTextResponse := responseClaude2OpenAI(&claudeResponse)
+	fullTextResponse := ResponseClaude2OpenAI(&claudeResponse)
 	fullTextResponse.Model = modelName
 
 	if len(claudeResponse.Content) > 0 && claudeResponse.Content[0].Text != "" {
@@ -752,7 +910,24 @@ func ClaudeHandler(c *gin.Context, resp *http.Response, promptTokens int, modelN
 		}, nil, ""
 	}
 
-	aitext = claudeResponse.Content[0].Text
+	if len(claudeResponse.Content) > 0 {
+		var thinkingText string
+		var responseText string
+
+		for _, content := range claudeResponse.Content {
+			if content.Type == "thinking" {
+				thinkingText = content.Thinking
+			} else if content.Type == "text" {
+				responseText = content.Text
+			}
+		}
+
+		if thinkingText != "" {
+			aitext = "<think>" + thinkingText + "</think>\n\n" + responseText
+		} else {
+			aitext = responseText
+		}
+	}
 	usage := model.Usage{
 		PromptTokens:     claudeResponse.Usage.InputTokens,
 		CompletionTokens: claudeResponse.Usage.OutputTokens,
@@ -766,4 +941,14 @@ func ClaudeHandler(c *gin.Context, resp *http.Response, promptTokens int, modelN
 	c.Writer.WriteHeader(resp.StatusCode)
 	_, err = c.Writer.Write(responseBody)
 	return nil, &usage, aitext
+}
+func ProcessToolCalls(lastToolCallChoice *openai.ChatCompletionsStreamResponseChoice, response *openai.ChatCompletionsStreamResponse) {
+	if len(lastToolCallChoice.Delta.ToolCalls) > 0 {
+		lastToolCall := &lastToolCallChoice.Delta.ToolCalls[len(lastToolCallChoice.Delta.ToolCalls)-1]
+		if lastToolCall != nil && lastToolCall.Function.Arguments == nil {
+			lastToolCall.Function.Arguments = "{}"
+			response.Choices[len(response.Choices)-1].Delta.Content = nil
+			response.Choices[len(response.Choices)-1].Delta.ToolCalls = lastToolCallChoice.Delta.ToolCalls
+		}
+	}
 }

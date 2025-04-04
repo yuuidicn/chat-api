@@ -24,6 +24,8 @@ function renderType(type) {
             return <Tag color='orange' size='large'> 管理 </Tag>;
         case 4:
             return <Tag color='purple' size='large'> 系统 </Tag>;
+        case 5:
+            return <Tag color='red' size='large'> 失败 </Tag>;
         default:
             return <Tag color='black' size='large'> 未知 </Tag>;
     }
@@ -93,7 +95,7 @@ const LogsTable = () => {
                 let channelName = record.channel_name || '未知渠道名称'; // 若不存在，则默认显示“未知渠道名称”
                 return (
                     isAdminUser ?
-                        (record.type === 0 || record.type === 2) ?
+                        (record.type === 0 || record.type === 2 || record.type === 5) ?
                             <div>
                                 <Tooltip content={channelName} position="top">
                                     <Tag color={colors[parseInt(text) % colors.length]} size='large' onClick={()=>{
@@ -132,7 +134,7 @@ const LogsTable = () => {
             dataIndex: 'token_name',
             render: (text, record, index) => {
                 return (
-                    record.type === 0 || record.type === 2 ?
+                    record.type === 0 || record.type === 2 || record.type === 5?
                         <div>
                             <Tag color='grey' size='large' onClick={() => {
                                 copyText(text)
@@ -159,7 +161,7 @@ const LogsTable = () => {
             dataIndex: 'model_name',
             render: (text, record, index) => {
                 return (
-                    record.type === 0 || record.type === 2 ?
+                    record.type === 0 || record.type === 2 || record.type === 5?
                         <div>
                             <Tag color={stringToColor(text)} size='large' onClick={() => {
                                 copyText(text)
@@ -175,7 +177,7 @@ const LogsTable = () => {
             dataIndex: 'ip',
             render: (text, record, index) => {
                 return (
-                    record.type === 0 || record.type === 2 ?
+                    record.type === 0 || record.type === 2 || record.type === 5?
                         <div>
                             <Tag color={stringToColor(text)} size='large' onClick={() => {
                                 copyText(text)
@@ -248,9 +250,41 @@ const LogsTable = () => {
             title: '倍率',
             dataIndex: 'multiplier',
             render: (text, record, index) => {
-                return (
-                    text
-                );
+                if (!text) return '-';
+                
+                try {
+                    const multiplierObj = typeof text === 'string' ? JSON.parse(text) : text;
+
+                    // 格式化显示内容，包含倍率和消耗信息
+                    const formattedContent = [
+                        // 倍率信息
+                        `模型倍率: ${multiplierObj.model_ratio || 0}`,
+                        `分组倍率: ${multiplierObj.group_ratio || 0}`,
+                        `补全倍率: ${multiplierObj.completion_ratio || 0}`,
+                        multiplierObj.audio_ratio ? `音频倍率: ${multiplierObj.audio_ratio}` : null,
+                        multiplierObj.audio_completion_ratio ? `音频补全倍率: ${multiplierObj.audio_completion_ratio}` : null,
+                        // 分隔线
+                        '------------------------',
+                        // 消耗信息
+                        multiplierObj.text_input ? `文本输入消耗: ${multiplierObj.text_input}` : null,
+                        multiplierObj.text_output ? `文本输出消耗: ${multiplierObj.text_output}` : null,
+                        multiplierObj.audio_input ? `音频输入消耗: ${multiplierObj.audio_input}` : null,
+                        multiplierObj.audio_output ? `音频输出消耗: ${multiplierObj.audio_output}` : null,
+                       
+                        // WebSocket标记
+                        multiplierObj.ws ? `WebSocket: 是` : null
+                    ].filter(Boolean).join('\n');
+
+                    return (
+                        <Tooltip content={<pre style={{ margin: 0 }}>{formattedContent}</pre>}>
+                            <span style={{ cursor: 'pointer' }}>
+                                {`模型倍率: ${multiplierObj.model_ratio || 0}倍`}
+                            </span>
+                        </Tooltip>
+                    );
+                } catch (e) {
+                    return <span>{text}</span>;
+                }
             },
         },
         {
@@ -450,18 +484,45 @@ const LogsTable = () => {
             <Layout>
                 <Header>
                 <h3 style={{
-                    color: '#333', 
-                    fontSize: '1.2rem', 
-                    marginTop: '50px', 
-                    marginBottom: '10px',
-                    backgroundColor: '#f8f8f8', 
-                    padding: '10px',
-                    borderRadius: '5px',
-                    boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                    color: '#333',
+                    fontSize: '1.2rem',
+                    marginTop: '50px',
+                    marginBottom: '5px',
+                    padding: '5px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px'
                 }}>
-                    使用明细（总消耗额度：<span style={{ color: '#5ca941' }}>{renderQuota(stat.quota)}</span>,
-                    RPM: <span style={{ color: '#ff5722' }}>{stat.rpm}</span>,
-                    TPM: <span style={{ color: '#2196f3' }}>{stat.tpm}</span>）
+                    <span>使用明细</span>
+                    <div style={{ 
+                        display: 'flex', 
+                        gap: '20px' 
+                    }}>
+                        <div style={{ 
+                            padding: '5px 12px',
+                            backgroundColor: '#f1f8ef',
+                            borderRadius: '4px',
+                            border: '1px solid #e8f5e3'
+                        }}>
+                            总消耗额度：<span style={{ color: '#5ca941' }}>{renderQuota(stat.quota)}</span>
+                        </div>
+                        <div style={{ 
+                            padding: '5px 12px',
+                            backgroundColor: '#fff4f1',
+                            borderRadius: '4px',
+                            border: '1px solid #ffe4de'
+                        }}>
+                            RPM：<span style={{ color: '#ff5722' }}>{stat.rpm}</span>
+                        </div>
+                        <div style={{ 
+                            padding: '5px 12px',
+                            backgroundColor: '#f1f8ff',
+                            borderRadius: '4px',
+                            border: '1px solid #e3f2fd'
+                        }}>
+                            TPM：<span style={{ color: '#2196f3' }}>{stat.tpm}</span>
+                        </div>
+                    </div>
                 </h3>
 
                 </Header>
@@ -523,7 +584,8 @@ const LogsTable = () => {
                     <Select.Option value="2">消费</Select.Option>
                     <Select.Option value="3">管理</Select.Option>
                     <Select.Option value="4">系统</Select.Option>
-                    <Select.Option value="5">重试</Select.Option>
+                    <Select.Option value="5">失败</Select.Option>
+                    <Select.Option value="6">重试</Select.Option>
                 </Select>
                 <Modal
                     visible={isModalOpen}

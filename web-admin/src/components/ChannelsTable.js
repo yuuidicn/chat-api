@@ -302,8 +302,22 @@ const ChannelsTable = () => {
                 return (
                     <div>
                         <Space spacing={1}>
-                            <Tooltip content={'已用额度'}>
-                                <Tag color='white' type='ghost' size='large'>{renderQuota(record.used_quota)}</Tag>
+                            <Tooltip content={'已用额度，点击清除所有计数'}>
+                                <Tag 
+                                    color='white' 
+                                    type='ghost' 
+                                    size='large' 
+                                    onClick={() => {
+                                        Modal.confirm({
+                                            title: '确认清除',
+                                            content: `确定要清除通道 "${record.name}" 的所有计数吗？`,
+                                            onOk: () => resetChannelStats(record),
+                                        });
+                                    }}
+                                    style={{ cursor: 'pointer' }}
+                                >
+                                    {renderQuota(record.used_quota)}
+                                </Tag>
                             </Tooltip>
                             <Tooltip content={'剩余额度' + record.balance + '，点击更新'}>
                                 <Tag color='white' type='ghost' size='large' onClick={() => {updateChannelBalance(record)}}>${renderNumberWithPoint(record.balance)}</Tag>
@@ -916,29 +930,26 @@ const ChannelsTable = () => {
 
     const copySelectedChannel = async () => {
         if (selectedChannels.size !== 1) {
-            showError("请选择一个渠道进行复制"); // 确保只选择了一个渠道
+            showError("请选择一个渠道进行复制");
             return;
         }
+        
         const channelId = Array.from(selectedChannels)[0];
-        const channelToCopy = channels.find(channel => String(channel.id) === String(channelId));
-        if (!channelToCopy) {
-            showError("选中的渠道未找到，请刷新页面后重试。");
-            return;
-        }
-
+    
         try {
-            const newChannel = {...channelToCopy, id: undefined,key: undefined,balance: undefined,used_quota: undefined,used_count: undefined}; // 示例：清除id以创建一个新渠道
-            // 发送复制请求到后端API
-            const response = await API.post('/api/channel/', newChannel);
+            // 确保 channelId 是数字类型
+            const response = await API.post('/api/channel/copy', {
+                id: Number(channelId) // 确保转换为数字
+            });
+            
             if (response.data.success) {
                 showSuccess("渠道复制成功");
-                // 刷新列表来显示新的渠道
                 refresh();
             } else {
-                showError(response.data.message);
+                showError(response.data.message || "复制失败");
             }
         } catch (error) {
-            showError("渠道复制失败: " + error.message);
+            showError("渠道复制失败: " + (error.response?.data?.message || error.message));
         }
     };
 
@@ -1173,6 +1184,47 @@ const ChannelsTable = () => {
     const handlePageChange = async (page) => {
         setActivePage(page);
         await loadChannels(page - 1, pageSize);
+    };
+
+    // 添加重置渠道统计数据的函数
+    const resetChannelStats = async (record) => {
+        try {
+            const res = await API.post(`/api/channel/reset_stats/${record.id}/`);
+            if (res.data.success) {
+                setChannels(prevChannels => prevChannels.map(channel => {
+                    if (channel.isTag && channel.children) {
+                        return {
+                            ...channel,
+                            children: channel.children.map(child => {
+                                if (child.id === record.id) {
+                                    return { 
+                                        ...child, 
+                                        used_quota: 0,
+                                        balance: 0,
+                                        used_count: 0
+                                    };
+                                }
+                                return child;
+                            })
+                        };
+                    }
+                    if (channel.id === record.id) {
+                        return { 
+                            ...channel, 
+                            used_quota: 0,
+                            balance: 0,
+                            used_count: 0
+                        };
+                    }
+                    return channel;
+                }));
+                showSuccess(`通道 ${record.name} 的所有计数已清除！`);
+            } else {
+                showError(res.data.message);
+            }
+        } catch (error) {
+            showError(`清除计数失败：${error.message}`);
+        }
     };
 
     return (

@@ -18,10 +18,14 @@ const STATUS_CODE_MAPPING_EXAMPLE = {
     'gemini-1.5-flash-002',
     'gemini-1.5-pro-latest',
     'gemini-1.5-flash-latest',
-    'gemini-1.5-pro-exp-0801',
-    'gemini-1.5-pro-exp-0827',
-    'gemini-1.5-flash-exp-0827',
-    'gemini-exp-1114',
+    'gemini-exp-1206',
+    'gemini-2.0-flash-exp',
+    'gemini-2.0-flash',
+    'gemini-2.0-flash-001',
+    'gemini-2.0-flash-lite-preview',
+    'gemini-2.0-flash-lite-preview-02-05',
+    'gemini-2.0-pro-exp',
+    'gemini-2.0-pro-exp-02-05',
 ];
 function type2secretPrompt(type) {
     // inputs.type === 15 ? '按照如下格式输入：APIKey|SecretKey' : (inputs.type === 18 ? '按照如下格式输入：APPID|APISecret|APIKey' : '请输入渠道对应的鉴权密钥')
@@ -98,6 +102,7 @@ const EditChannel = (props) => {
     const [istools, setIstools] = useState(true);
     const [isimageurenabled, setIsImageURLEnabled] = useState(false);
     const [claudeoriginalrequest, setClaudeOriginalRequest] = useState(false);
+    const [supportsCacheControl, setSupportsCacheControl] = useState(false);
     const [config, setConfig] = useState({
         region: '',
         sk: '',
@@ -148,7 +153,8 @@ const EditChannel = (props) => {
                     break;
                 case 24:
                     localModels = ['gemini-1.5-pro-001','gemini-1.5-pro-latest','gemini-1.5-flash-latest','gemini-1.5-pro-exp-0801',
-                        'gemini-1.5-pro-exp-0827','gemini-1.5-flash-exp-0827','gemini-1.5-pro-002','gemini-1.5-flash-002','gemini-exp-1114'];
+                        'gemini-1.5-pro-exp-0827','gemini-1.5-flash-exp-0827','gemini-1.5-pro-002','gemini-1.5-flash-002','gemini-exp-1114',
+                        'gemini-exp-1206','gemini-2.0-flash-thinking-exp-1219','gemini-2.0-flash-exp'];
                     break;
                 case 2:
                     localModels = ['midjourney'];
@@ -309,6 +315,7 @@ const EditChannel = (props) => {
             setRateLimited(data.rate_limited || false);
             setIstools(data.is_tools || false);
             setClaudeOriginalRequest(data.claude_original_request || false);
+            setSupportsCacheControl(data.supports_cache_control || false);
             setRateLimitedConut(data.rate_limit_count || 0);
             // console.log(data);
         } else {
@@ -420,7 +427,7 @@ const EditChannel = (props) => {
             showInfo('密钥文件必须是合法的 JSON 格式！');
             return;
         }
-        if (config.ak !== '' && config.sk !== '' && config.region !== '') {
+        if (inputs.type === 36 && (config.ak !== '' && config.sk !== '' && config.region !== '')) {
             inputs.key = `${config.ak}|${config.sk}|${config.region}`;
         }
         let localInputs = {...inputs};
@@ -430,6 +437,7 @@ const EditChannel = (props) => {
         localInputs.priority = priority;
         localInputs.weight = weight;
         localInputs.rate_limited = rateLimited;
+        localInputs.supports_cache_control = supportsCacheControl;
         localInputs.is_tools = istools;
         localInputs.is_image_url_enabled = isimageurenabled ? 1 : 0;
         localInputs.claude_original_request = claudeoriginalrequest;
@@ -469,6 +477,7 @@ const EditChannel = (props) => {
                 priority: parseInt(priority, 10) || 0, 
                 weight: parseInt(weight, 10) || 0, 
                 rate_limited: rateLimited,
+                supports_cache_control: supportsCacheControl,
                 is_tools: istools,
                 proxy_url: inputs.proxy_url,
                 claude_original_request: claudeoriginalrequest,
@@ -1176,15 +1185,26 @@ const EditChannel = (props) => {
                     }
                      {
                         ((inputs.type === 42) || (inputs.type === 14) || (inputs.type === 35))  && (
-                            <div style={{marginTop: 10, display: 'flex'}}>
-                                <Space>
-                                    <Checkbox
-                                        checked={claudeoriginalrequest}
-                                        onChange={() => setClaudeOriginalRequest(!claudeoriginalrequest)}
-                                    />
-                                    <Typography.Text strong>支持原始Claude请求</Typography.Text>
-                                </Space>
-                            </div>
+                            <>
+                                <div style={{marginTop: 10, display: 'flex'}}>
+                                    <Space>
+                                        <Checkbox
+                                            checked={claudeoriginalrequest}
+                                            onChange={() => setClaudeOriginalRequest(!claudeoriginalrequest)}
+                                        />
+                                        <Typography.Text strong>支持 Claude 原生请求格式</Typography.Text>
+                                    </Space>
+                                </div>
+                                <div style={{marginTop: 10, display: 'flex'}}>
+                                    <Space>
+                                        <Checkbox
+                                            checked={supportsCacheControl}
+                                            onChange={() => setSupportsCacheControl(!supportsCacheControl)}
+                                        />
+                                        <Typography.Text strong>支持 Cache-Control 缓存控制</Typography.Text>
+                                    </Space>
+                                </div>
+                            </>
                         )
                     }
                     <div style={{marginTop: 20, display: 'flex', alignItems: 'center'}}>

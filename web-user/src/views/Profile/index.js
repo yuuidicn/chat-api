@@ -19,14 +19,13 @@ import SubCard from 'ui-component/cards/SubCard';
 import { IconBrandWechat, IconBrandGithub, IconMail } from '@tabler/icons-react';
 import Label from 'ui-component/Label';
 import { API } from 'utils/api';
-import { showError, showSuccess } from 'utils/common';
-import { onGitHubOAuthClicked } from 'utils/common';
+import { showError, showSuccess,onGitHubOAuthClicked } from 'utils/common';
 import * as Yup from 'yup';
 import WechatModal from 'views/Authentication/AuthForms/WechatModal';
 import { useSelector } from 'react-redux';
 import EmailModal from './component/EmailModal';
 import Turnstile from 'react-turnstile';
-import { useNavigate } from 'react-router';
+import { getModelIcon } from 'utils/common';
 const validationSchema = Yup.object().shape({
   username: Yup.string().required('用户名 不能为空').min(3, '用户名 不能小于 3 个字符'),
   display_name: Yup.string(),
@@ -34,6 +33,49 @@ const validationSchema = Yup.object().shape({
     return !val || val.length >= 8;
   })
 });
+
+// 添加一个通用的按钮样式
+const commonButtonSx = {
+  borderRadius: '8px',
+  transition: 'all 0.3s ease-in-out',
+  textTransform: 'none',
+  boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
+  '&:hover': {
+    transform: 'translateY(-2px)',
+    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.2)',
+  }
+};
+
+const MODEL_CATEGORIES = [
+  { key: 'OpenAI', includes: ['gpt-3', 'gpt-4', 'o1', 'o3', 'chatgpt', 'tts', 'dall-e', 'whisper', 'omni-', 'text-embedding','text-moderation-','davinci','babbage'] },
+  { key: 'Claude', includes: ['claude'] },
+  { key: 'Gemini', includes: ['gemini'] },
+  { key: 'Deep Seek', includes: ['deepseek'] },
+  { key: 'Grok', includes: ['grok'] },
+  { key: '智谱AI', includes: ['glm','chatglm'] },
+  { key: '混元', includes: ['hunyuan'] },
+  { key: 'Spark', includes: ['spark'] },
+  { key: 'Minimax', includes: ['abad'] },
+  { key: 'kimi', includes: ['moonshot'] },
+  { key: '一零万物', includes: ['yi'] },
+  { key: 'Groq', includes: ['groq'] },
+  { key: 'Ollama', includes: ['ollama','llama'] },
+  { key: '豆包', includes: ['doubao'] },
+  { key: '360', includes: ['360'] },
+  { key: 'Midjourney', includes: ['midjourney', 'mj-chat'] },
+  { key: 'Flux', includes: ['flux'] },
+  { key: 'Suno', includes: ['suno'] },
+  { key: 'Pika', includes: ['pika'] },
+  { key: 'Vidu', includes: ['vidu'] },
+  { key: 'Baidu', includes: ['ERNIE'] },
+  { key: 'Ali', includes: ['qwen'] },
+  { key: 'Cohere', includes: ['command'] },
+  { key: 'Baichuan', includes: ['Baichuan'] },
+  { key: 'ERNIE-', includes: ['ERNIE-'] },
+  { key: 'command', includes: ['command'] },
+  { key: 'Baichuan', includes: ['Baichuan'] },
+
+];
 
 export default function Profile() {
   const [inputs, setInputs] = useState([]);
@@ -45,8 +87,7 @@ export default function Profile() {
   const [openEmail, setOpenEmail] = useState(false);
   const status = useSelector((state) => state.siteInfo);
   const [models, setModels] = useState([]);
-  const navigate = useNavigate();
-
+  const [editMode, setEditMode] = useState(false);
 
   const handleWechatOpen = () => {
     setOpenWechat(true);
@@ -70,7 +111,7 @@ export default function Profile() {
       showError(message);
     }
   };
-
+  
   const bindWeChat = async (code) => {
     if (code === '') return;
     try {
@@ -120,7 +161,17 @@ export default function Profile() {
         let res = await API.get('/api/user/models');
         const { success, message, data } = res.data;
         if (success) {
-            setModels(data);
+            // 对模型进行分类和排序
+            const sortedModels = data.sort((a, b) => {
+                const getModelPriority = (model) => {
+                    if (model.toLowerCase().includes('gpt')) return 1;
+                    if (model.toLowerCase().includes('claude')) return 2;
+                    if (model.toLowerCase().includes('gemini')) return 3;
+                    return 4;
+                };
+                return getModelPriority(a) - getModelPriority(b);
+            });
+            setModels(sortedModels);
         } else {
             showError(message);
         }
@@ -129,6 +180,27 @@ export default function Profile() {
     }
   };
 
+  const copyAllModels = () => {
+    if (!models || models.length === 0) {
+      showError('没有可用的模型！');
+      return;
+    }
+
+    const modelString = models.join(',');
+    
+    if (!navigator.clipboard) {
+      showError(`复制失败，请手动复制！ ${modelString}`);
+      return;
+    }
+
+    navigator.clipboard.writeText(modelString)
+      .then(() => {
+        showSuccess('所有模型已复制到剪贴板');
+      })
+      .catch(() => {
+        showError(`复制失败，请手动复制！ ${modelString}`);
+      });
+  };
 
   useEffect(() => {
     if (status) {
@@ -141,10 +213,6 @@ export default function Profile() {
     loadModels();
   }, [status]);
   
-
-  const goModel = () => {
-    navigate('/model');
-  };
 
   return (
     <>
@@ -163,91 +231,264 @@ export default function Profile() {
               </Label>
             </Stack>
             <SubCard title="个人信息">
-              <Grid container spacing={2}>
-                <Grid xs={12}>
-                  <FormControl fullWidth variant="outlined">
-                    <InputLabel htmlFor="username">用户名</InputLabel>
-                    <OutlinedInput
-                      id="username"
-                      label="用户名"
-                      type="text"
-                      value={inputs.username || ''}
-                      onChange={handleInputChange}
-                      name="username"
-                      placeholder="请输入用户名"
-                    />
-                  </FormControl>
+              {!editMode ? (
+                <Grid container spacing={2}>
+                  <Grid xs={12}>
+                    <Stack spacing={1.5}>
+                      <Box display="flex" alignItems="center">
+                        <Typography variant="subtitle1" color="textSecondary" sx={{ width: 120 }}>
+                          用户名
+                        </Typography>
+                        <Typography variant="body1">
+                          {inputs.username}
+                        </Typography>
+                      </Box>
+                      <Box display="flex" alignItems="center">
+                        <Typography variant="subtitle1" color="textSecondary" sx={{ width: 120 }}>
+                          显示名称
+                        </Typography>
+                        <Typography variant="body1">
+                          {inputs.display_name || '未设置'}
+                        </Typography>
+                      </Box>
+                    </Stack>
+                    <Button 
+                      variant="contained" 
+                      onClick={() => setEditMode(true)} 
+                      sx={{ 
+                        mt: 3,
+                        ...commonButtonSx,
+                        background: 'linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)',
+                        color: 'white'
+                      }}
+                    >
+                      修改密码
+                    </Button>
+                  </Grid>
                 </Grid>
-                <Grid xs={12}>
-                  <FormControl fullWidth variant="outlined">
-                    <InputLabel htmlFor="password">密码</InputLabel>
-                    <OutlinedInput
-                      id="password"
-                      label="密码"
-                      type="password"
-                      value={inputs.password || ''}
-                      onChange={handleInputChange}
-                      name="password"
-                      placeholder="请输入密码"
-                    />
-                  </FormControl>
+              ) : (
+                <Grid container spacing={2}>
+                  <Grid xs={12}>
+                    <FormControl fullWidth variant="outlined">
+                      <InputLabel htmlFor="username">用户名</InputLabel>
+                      <OutlinedInput
+                        id="username"
+                        label="用户名"
+                        type="text"
+                        value={inputs.username || ''}
+                        onChange={handleInputChange}
+                        name="username"
+                        placeholder="请输入用户名"
+                      />
+                    </FormControl>
+                  </Grid>
+                  <Grid xs={12}>
+                    <FormControl fullWidth variant="outlined">
+                      <InputLabel htmlFor="password">密码</InputLabel>
+                      <OutlinedInput
+                        id="password"
+                        label="密码"
+                        type="password"
+                        value={inputs.password || ''}
+                        onChange={handleInputChange}
+                        name="password"
+                        placeholder="请输入密码"
+                      />
+                    </FormControl>
+                  </Grid>
+                  <Grid xs={12}>
+                    <FormControl fullWidth variant="outlined">
+                      <InputLabel htmlFor="display_name">显示名称</InputLabel>
+                      <OutlinedInput
+                        id="display_name"
+                        label="显示名称"
+                        type="text"
+                        value={inputs.display_name || ''}
+                        onChange={handleInputChange}
+                        name="display_name"
+                        placeholder="请输入显示名称"
+                      />
+                    </FormControl>
+                  </Grid>
+                  <Grid xs={12}>
+                    <Stack direction="row" spacing={2}>
+                      <Button 
+                        variant="contained" 
+                        color="primary" 
+                        onClick={submit}
+                        sx={{
+                          ...commonButtonSx,
+                          background: 'linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)',
+                        }}
+                      >
+                        提交
+                      </Button>
+                      <Button 
+                        variant="outlined" 
+                        onClick={() => setEditMode(false)}
+                        sx={{
+                          ...commonButtonSx,
+                          borderColor: '#2196F3',
+                          '&:hover': {
+                            ...commonButtonSx['&:hover'],
+                            borderColor: '#21CBF3',
+                            background: 'rgba(33, 150, 243, 0.04)'
+                          }
+                        }}
+                      >
+                        取消
+                      </Button>
+                    </Stack>
+                  </Grid>
                 </Grid>
-                <Grid xs={12}>
-                  <FormControl fullWidth variant="outlined">
-                    <InputLabel htmlFor="display_name">显示名称</InputLabel>
-                    <OutlinedInput
-                      id="display_name"
-                      label="显示名称"
-                      type="text"
-                      value={inputs.display_name || ''}
-                      onChange={handleInputChange}
-                      name="display_name"
-                      placeholder="请输入显示名称"
-                    />
-                  </FormControl>
-                </Grid>
-                <Grid xs={12}>
-                  <Button variant="contained" color="primary" onClick={submit}>
-                    提交
-                  </Button>
-                </Grid>
-              </Grid>
+              )}
             </SubCard>
             <SubCard title="">
-            <Stack direction="row" alignItems="center" justifyContent="flex-start" mb={2} spacing={2}>
-              <Typography variant="h2">模型</Typography>
-              <Button variant="contained" onClick={goModel}>
-                计费
-              </Button>
-            </Stack>
-
-              <Typography variant="h6">可用模型</Typography>
-              
+              <Stack direction="row" alignItems="center" justifyContent="flex-start" mb={2} spacing={2}>
+                <Typography variant="h2">可用模型</Typography>
+                <Button 
+                  variant="contained" 
+                  onClick={copyAllModels}
+                  sx={{
+                    ...commonButtonSx,
+                    background: 'linear-gradient(45deg, #4CAF50 30%, #81C784 90%)',
+                  }}
+                >
+                  复制所有模型
+                </Button>
+              </Stack>
               <Box sx={{
                 display: 'flex',
-                flexWrap: 'wrap',
-                alignItems: 'center',
+                flexDirection: 'column',
+                gap: 2
               }}>
-                {/* 移除Stack的spacing和flexWrap属性 */}
-                {models.map((model) => (
-                  <Chip
-                    key={model}
-                    label={model}
-                    color="primary"
-                    onClick={() => {
-                      if (navigator.clipboard) {
-                        navigator.clipboard.writeText(model).then(() => {
-                          showSuccess(`模型 ${model} 已复制到剪贴板`);
-                        }).catch(() => {
-                          showError(`复制失败，请手动复制！ ${model}`);
-                        });
-                      } else {
-                        showError(`复制失败，请手动复制！ ${model}`);
-                      }
-                    }}
-                    sx={{ margin: '3px' }} 
-                  />
-                ))}
+                {MODEL_CATEGORIES.map(category => {
+                    const categoryModels = models.filter(model => 
+                        category.includes.some(prefix => 
+                            model.toLowerCase().startsWith(prefix.toLowerCase())
+                        )
+                    );
+                    
+                    return categoryModels.length > 0 && (
+                        <Box key={category.key}>
+                            <Typography variant="subtitle2" sx={{ mb: 1, color: 'text.secondary' }}>
+                                {category.key}
+                            </Typography>
+                            <Box sx={{
+                                display: 'flex',
+                                flexWrap: 'wrap',
+                                alignItems: 'center',
+                                gap: 1
+                            }}>
+                                {categoryModels.map((model) => (
+                                    <Chip
+                                        key={model}
+                                        label={
+                                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                                {getModelIcon(model)}
+                                                <span>{model}</span>
+                                            </Box>
+                                        }
+                                        variant="outlined"
+                                        size="small"
+                                        onClick={() => {
+                                            if (navigator.clipboard) {
+                                                navigator.clipboard.writeText(model).then(() => {
+                                                    showSuccess(`模型 ${model} 已复制到剪贴板`);
+                                                }).catch(() => {
+                                                    showError(`复制失败，请手动复制！ ${model}`);
+                                                });
+                                            } else {
+                                                showError(`复制失败，请手动复制！ ${model}`);
+                                            }
+                                        }}
+                                        sx={(theme) => ({ 
+                                            margin: '3px',
+                                            borderRadius: '4px',
+                                            backgroundColor: 'rgba(33, 150, 243, 0.1)',
+                                            border: '1px solid',
+                                            borderColor: 'rgba(33, 150, 243, 0.2)',
+                                            color: theme.palette.text.primary,
+                                            '&:hover': {
+                                                backgroundColor: 'rgba(76, 175,80, 0.1)',
+                                                borderColor: 'rgba(76, 175,80, 0.3)',
+                                                color: '#FF1493',
+                                                cursor: 'pointer'
+                                            },
+                                            fontSize: '0.875rem',
+                                            height: '24px'
+                                        })} 
+                                    />
+                                ))}
+                            </Box>
+                        </Box>
+                    );
+                })}
+                
+                {(() => {
+                    const otherModels = models.filter(model => 
+                        !MODEL_CATEGORIES.some(category => 
+                            category.includes.some(prefix => 
+                                model.toLowerCase().startsWith(prefix.toLowerCase())
+                            )
+                        )
+                    );
+                    
+                    return otherModels.length > 0 && (
+                        <Box>
+                            <Typography variant="subtitle2" sx={{ mb: 1, color: 'text.secondary' }}>
+                                其他模型
+                            </Typography>
+                            <Box sx={{
+                                display: 'flex',
+                                flexWrap: 'wrap',
+                                alignItems: 'center',
+                                gap: 1
+                            }}>
+                                {otherModels.map((model) => (
+                                    <Chip
+                                        key={model}
+                                        label={
+                                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                                {getModelIcon(model)}
+                                                <span>{model}</span>
+                                            </Box>
+                                        }
+                                        variant="outlined"
+                                        size="small"
+                                        onClick={() => {
+                                            if (navigator.clipboard) {
+                                                navigator.clipboard.writeText(model).then(() => {
+                                                    showSuccess(`模型 ${model} 已复制到剪贴板`);
+                                                }).catch(() => {
+                                                    showError(`复制失败，请手动复制！ ${model}`);
+                                                });
+                                            } else {
+                                                showError(`复制失败，请手动复制！ ${model}`);
+                                            }
+                                        }}
+                                        sx={(theme) => ({ 
+                                            margin: '3px',
+                                            borderRadius: '4px',
+                                            backgroundColor: 'rgba(33, 150, 243, 0.1)',
+                                            border: '1px solid',
+                                            borderColor: 'rgba(33, 150, 243, 0.2)',
+                                            color: theme.palette.text.primary,
+                                            '&:hover': {
+                                                backgroundColor: 'rgba(76, 175,80, 0.1)',
+                                                borderColor: 'rgba(76, 175,80, 0.3)',
+                                                color: '#FF1493',
+                                                cursor: 'pointer'
+                                            },
+                                            fontSize: '0.875rem',
+                                            height: '24px'
+                                        })} 
+                                    />
+                                ))}
+                            </Box>
+                        </Box>
+                    );
+                })()}
               </Box>
             </SubCard>
             <SubCard title="账号绑定">
@@ -271,6 +512,10 @@ export default function Profile() {
                     variant="contained"
                     onClick={() => {
                       setOpenEmail(true);
+                    }}
+                    sx={{
+                      ...commonButtonSx,
+                      background: 'linear-gradient(45deg, #FF9800 30%, #FFB74D 90%)',
                     }}
                   >
                     {inputs.email ? '更换邮箱' : '绑定邮箱'}
@@ -302,7 +547,19 @@ export default function Profile() {
                   </Grid>
                 )}
                 <Grid xs={12}>
-                  <Button variant="contained" onClick={generateAccessToken}>
+                  <Button 
+                    variant="contained" 
+                    onClick={generateAccessToken}
+                    sx={{
+                      ...commonButtonSx,
+                      background: 'linear-gradient(45deg, #9C27B0 30%, #E040FB 90%)',
+                      color: 'white',
+                      '&:hover': {
+                        ...commonButtonSx['&:hover'],
+                        background: 'linear-gradient(45deg, #8E24AA 30%, #D500F9 90%)',
+                      }
+                    }}
+                  >
                     {inputs.access_token ? '重置访问令牌' : '生成访问令牌'}
                   </Button>
                 </Grid>
@@ -330,9 +587,29 @@ export default function Profile() {
         <Divider />
         <DialogContent>您正在删除自己的帐户，将清空所有数据且不可恢复</DialogContent>
         <DialogActions>
-          <Button onClick={() => setShowAccountDeleteModal(false)}>取消</Button>
+          <Button 
+            onClick={() => setShowAccountDeleteModal(false)}
+            sx={{
+              ...commonButtonSx,
+              color: 'text.secondary',
+              '&:hover': {
+                ...commonButtonSx['&:hover'],
+                background: 'rgba(0, 0, 0, 0.04)'
+              }
+            }}
+          >
+            取消
+          </Button>
           <Button
-            sx={{ color: 'error.main' }}
+            sx={{
+              ...commonButtonSx,
+              background: 'linear-gradient(45deg, #f44336 30%, #ff7961 90%)',
+              color: 'white',
+              '&:hover': {
+                ...commonButtonSx['&:hover'],
+                background: 'linear-gradient(45deg, #d32f2f 30%, #f44336 90%)',
+              }
+            }}
             onClick={async () => {
               setShowAccountDeleteModal(false);
             }}

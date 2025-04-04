@@ -124,16 +124,21 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	c.Set("headers", channel.GetModelHeaders())
 	c.Set(ctxkey.OriginalModel, modelName)
 	c.Set("attemptsLog", attemptsLog)
-	ban := true
-	if channel.AutoBan != nil && *channel.AutoBan == 0 {
-		ban = false
+	if channel.AutoBan != nil && *channel.AutoBan != 0 {
+		c.Set("auto_ban", 1)
+	} else {
+		c.Set("auto_ban", 0)
 	}
-	c.Set("auto_ban", ban)
 	c.Set("model_mapping", channel.GetModelMapping())
 	c.Set("status_code_mapping", channel.GetStatusCodeMapping())
 	c.Set("original_model", modelName)
 	c.Request.Header.Set("Authorization", fmt.Sprintf("Bearer %s", channel.Key))
 	c.Set("base_url", channel.GetBaseURL())
+	var supportsCacheControl bool
+	if channel.SupportsCacheControl != nil {
+		supportsCacheControl = *channel.SupportsCacheControl
+	}
+	c.Set("supports_cache_control", supportsCacheControl)
 	cfg, _ := channel.LoadConfig()
 	// 兼容旧版本
 	if cfg.APIVersion == "" {

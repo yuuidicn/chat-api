@@ -32,7 +32,25 @@ func RelayClaude(c *gin.Context) *model.ErrorWithStatusCode {
 		logger.Errorf(ctx, "getAndValidateTextRequest failed: %s", err.Error())
 		return openai.ErrorWrapper(err, "invalid_text_request", http.StatusBadRequest)
 	}
+	// 处理 system 消息格式
+	println(meta.SupportsCacheControl)
+	if textRequest.System != "" {
+		systemContent, ok := textRequest.System.([]interface{})
+		if ok {
+			if !meta.SupportsCacheControl {
 
+				// 不支持 cache_control，提取纯文本
+				for _, item := range systemContent {
+					if contentMap, ok := item.(map[string]interface{}); ok {
+						if text, exists := contentMap["text"]; exists {
+							textRequest.System = text.(string)
+							break
+						}
+					}
+				}
+			}
+		}
+	}
 	meta.IsStream = textRequest.Stream
 	meta.AttemptsLog = c.GetString("attemptsLog")
 	// map model name
@@ -91,7 +109,7 @@ func RelayClaude(c *gin.Context) *model.ErrorWithStatusCode {
 	} else {
 		requestBody = c.Request.Body
 	}
-	if meta.APIType == constant.APITypeGCP || meta.APIType == constant.APITypeAwsClaude {
+	if meta.APIType == constant.APITypeGCP || meta.APIType == constant.APITypeAwsClaude || meta.APIType == constant.APITypeAnthropic {
 		convertedRequest, err := adaptor.ConvertRequest(c, meta, textRequest)
 		if err != nil {
 			return openai.ErrorWrapper(err, "convert_request_failed", http.StatusInternalServerError)
@@ -103,6 +121,7 @@ func RelayClaude(c *gin.Context) *model.ErrorWithStatusCode {
 		logger.Debugf(ctx, "converted request: \n%s", string(jsonData))
 		requestBody = bytes.NewBuffer(jsonData)
 	}
+
 	// do responses
 	startTime := time.Now()
 	// do request
@@ -131,8 +150,6 @@ func RelayClaude(c *gin.Context) *model.ErrorWithStatusCode {
 			actualStatusCode := determineActualStatusCode(respErr.StatusCode, respErr.Message)
 			// 更新 respErr 的状态码
 			respErr.StatusCode = actualStatusCode
-			// 使用实际的状态码
-			c.Status(actualStatusCode)
 		}
 		util.ReturnPreConsumedQuota(ctx, preConsumedQuota, meta.TokenId)
 		util.ResetStatusCode(respErr, statusCodeMappingStr)

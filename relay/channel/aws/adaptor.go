@@ -3,6 +3,7 @@ package aws
 import (
 	"io"
 	"net/http"
+	"strings"
 
 	"one-api/common/config"
 	"one-api/common/ctxkey"
@@ -45,6 +46,38 @@ func (a *Adaptor) ConvertRequest(c *gin.Context, meta *util.RelayMeta, request *
 	if request == nil {
 		return nil, errors.New("request is nil")
 	}
+
+	// 检查是否是 Cohere 模型
+	if strings.HasPrefix(request.Model, "command") {
+		messages := request.Messages
+		var prompt string
+		for _, msg := range messages {
+			prompt += msg.Role + ": " + msg.Content.(string) + "\n"
+		}
+
+		// 从请求中获取值，如果没有则使用默认值
+		maxTokens := request.MaxTokens
+		if maxTokens <= 0 {
+			maxTokens = 2048
+		}
+
+		temperature := 0.7
+		if request.Temperature != nil {
+			temperature = *request.Temperature
+		}
+
+		cohereReq := &CohereRequest{
+			Message:     prompt,
+			MaxTokens:   int(maxTokens),
+			Temperature: temperature,
+		}
+		c.Set(ctxkey.Cross, meta.Config.Cross)
+		c.Set(ctxkey.RequestModel, request.Model)
+		c.Set(ctxkey.ConvertedRequest, cohereReq)
+		return cohereReq, nil
+	}
+
+	// 原有的 Claude 处理逻辑
 	var claudeReq any
 	valueclaudeoriginalrequest, _ := c.Get("claude_original_request")
 	isclaudeoriginalrequest, _ := valueclaudeoriginalrequest.(bool)
@@ -52,6 +85,9 @@ func (a *Adaptor) ConvertRequest(c *gin.Context, meta *util.RelayMeta, request *
 		claudeReq = anthropic.ConverClaudeRequest(*request)
 	} else {
 		claudeReq = anthropic.ConvertRequest(*request)
+	}
+	if strings.HasSuffix(request.Model, "-thinking") {
+		request.Model = strings.TrimSuffix(request.Model, "-thinking")
 	}
 	c.Set(ctxkey.Cross, meta.Config.Cross)
 	c.Set(ctxkey.RequestModel, request.Model)
@@ -71,13 +107,28 @@ func (a *Adaptor) DoRequest(c *gin.Context, meta *util.RelayMeta, requestBody io
 }
 
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, meta *util.RelayMeta) (aitext string, usage *model.Usage, err *model.ErrorWithStatusCode) {
+	if strings.HasPrefix(meta.ActualModelName, "command") {
+		if meta.IsStream {
+			err, usage, aitext = StreamCohereHandler(c, a.awsClient)
+		} else {
+			err, usage, aitext = CohereHandler(c, a.awsClient, meta.ActualModelName)
+		}
+		return
+	}
+
+	// 原有的 Claude 处理逻辑
 	if !meta.IsClaude {
 		if meta.IsStream {
 			var responseText string
-			err, _, responseText = StreamHandler(c, a.awsClient)
-			usage = openai.ResponseText2Usage(responseText, meta.ActualModelName, meta.PromptTokens)
-
-			if usage.CompletionTokens == 0 {
+			err, usage, responseText = StreamHandler(c, a.awsClient)
+			if usage == nil {
+				usage = openai.ResponseText2Usage(responseText, meta.ActualModelName, meta.PromptTokens)
+			}
+			if usage.TotalTokens != 0 && usage.CompletionTokens == 0 || usage.PromptTokens == 0 { // some channels don't return prompt tokens & completion tokens
+				usage.PromptTokens = meta.PromptTokens
+				usage.CompletionTokens = usage.TotalTokens - meta.PromptTokens
+			}
+			if usage.CompletionTokens == 0 && err == nil {
 				if config.BlankReplyRetryEnabled {
 					return "", nil, &model.ErrorWithStatusCode{
 						Error: model.Error{
@@ -97,9 +148,15 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, meta *util.Rel
 	} else {
 		if meta.IsStream {
 			var responseText string
-			err, _, responseText = StreamClaudeHandler(c, a.awsClient)
-			usage = openai.ResponseText2Usage(responseText, meta.ActualModelName, meta.PromptTokens)
-			if usage.CompletionTokens == 0 {
+			err, usage, responseText = StreamClaudeHandler(c, a.awsClient)
+			if usage == nil {
+				usage = openai.ResponseText2Usage(responseText, meta.ActualModelName, meta.PromptTokens)
+			}
+			if usage.TotalTokens != 0 && usage.CompletionTokens == 0 || usage.PromptTokens == 0 { // some channels don't return prompt tokens & completion tokens
+				usage.PromptTokens = meta.PromptTokens
+				usage.CompletionTokens = usage.TotalTokens - meta.PromptTokens
+			}
+			if usage.CompletionTokens == 0 && err == nil {
 				if config.BlankReplyRetryEnabled {
 					return "", nil, &model.ErrorWithStatusCode{
 						Error: model.Error{
@@ -112,6 +169,7 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, meta *util.Rel
 					}
 				}
 			}
+			aitext = responseText
 		} else {
 			err, usage, aitext = ClaudeHandler(c, a.awsClient, meta.OriginModelName)
 		}

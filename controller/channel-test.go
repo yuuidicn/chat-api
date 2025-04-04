@@ -130,6 +130,10 @@ func testChannel(channel *model.Channel, modelTest string) (err error, openaiErr
 			"o1-preview":             "o1-preview-2024-09-12",
 			"o1-mini-2024-09-12":     "o1-mini-2024-09-12",
 			"o1-mini":                "o1-mini-2024-09-12",
+			"o3-mini-2024-09-12":     "o3-mini-2025-01-31",
+			"o3-mini":                "o3-mini-2025-01-31",
+			"o1":                     "o1-2024-12-17",
+			"o1-2024-12-17":          "o1-2024-12-17",
 		}
 
 		// 检查模型映射
@@ -198,7 +202,7 @@ func buildTestRequest(modelTest string) *relaymodel.GeneralOpenAIRequest {
 		Stream: false,
 		Model:  modelTest,
 	}
-	if strings.HasPrefix(modelTest, "o1-") {
+	if strings.HasPrefix(modelTest, "o1") || strings.HasPrefix(modelTest, "o3") {
 		testRequest.MaxCompletionTokens = 5
 	} else {
 		testRequest.MaxTokens = 5
@@ -343,7 +347,7 @@ func testAllChannels(notify bool) error {
 
 			// ban := false
 			// 标记是否应该禁用通道
-			ban := (openaiErr != nil || milliseconds > disableThreshold) && util.ShouldDisableChannel(openaiErr, -1)
+			ban := (openaiErr != nil || milliseconds > disableThreshold) && util.ShouldDisableChannel(openaiErr, -1, *channel.AutoBan)
 
 			if milliseconds > disableThreshold {
 				err = errors.New(fmt.Sprintf("响应时间 %.2fs 超过阈值 %.2fs", float64(milliseconds)/1000.0, float64(disableThreshold)/1000.0))

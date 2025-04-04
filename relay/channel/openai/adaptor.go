@@ -42,15 +42,6 @@ func (a *Adaptor) GetRequestURL(meta *util.RelayMeta) (string, error) {
 		task := strings.TrimPrefix(requestURL, "/v1/")
 		model_ := meta.ActualModelName
 		model_ = strings.Replace(model_, ".", "", -1)
-		model_ = strings.TrimSuffix(model_, "-0301")
-		model_ = strings.TrimSuffix(model_, "-0314")
-		model_ = strings.TrimSuffix(model_, "-0613")
-		if meta.ActualModelName == "gpt-4-turbo" {
-			model_ = "gpt-4-turbo-2024-04-09"
-		}
-		if meta.ActualModelName == "gpt-4o-2024-05-13" {
-			model_ = "gpt-4o"
-		}
 		//https://github.com/songquanpeng/one-api/issues/1191
 		// {your endpoint}/openai/deployments/{your azure_model}/chat/completions?api-version={api_version}
 		requestURL = fmt.Sprintf("/openai/deployments/%s/%s", model_, task)
@@ -90,15 +81,24 @@ func (a *Adaptor) ConvertRequest(c *gin.Context, meta *util.RelayMeta, request *
 		request.StreamOptions = nil
 	}
 
-	if request.StreamOptions == nil && meta.ChannelType == common.ChannelTypeOpenAI && meta.IsStream {
+	if meta.Mode != constant.RelayResponses && request.StreamOptions == nil && meta.ChannelType == common.ChannelTypeOpenAI && meta.IsStream {
 		request.StreamOptions = &model.StreamOptions{
 			IncludeUsage: true,
 		}
 	}
-	if strings.HasPrefix(request.Model, "o1-") {
+	if strings.HasPrefix(request.Model, "o1") || strings.HasPrefix(request.Model, "o3") {
 		if request.MaxCompletionTokens == 0 && request.MaxTokens != 0 {
 			request.MaxCompletionTokens = request.MaxTokens
 			request.MaxTokens = 0
+		}
+		if strings.HasPrefix(request.Model, "o3") {
+			request.Temperature = nil
+		}
+	}
+	if request.Model == "o1" || request.Model == "o1-2024-12-17" || strings.HasPrefix(request.Model, "o3") {
+		//修改第一个Message的内容，将system改为developer
+		if len(request.Messages) > 0 && request.Messages[0].Role == "system" {
+			request.Messages[0].Role = "developer"
 		}
 	}
 	return request, nil
@@ -122,8 +122,13 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, meta *util.Rel
 
 		var responseText string
 		var toolCount int
-		err, responseText, toolCount, usage = StreamHandler(c, resp, meta.Mode, meta.ActualModelName, meta.FixedContent)
-		aitext = responseText
+		if meta.Mode == constant.RelayResponses {
+			err, responseText, _, usage = ResponsesStreamHandler(c, resp, meta.Mode, meta.ActualModelName, meta.FixedContent, meta.PromptTokens)
+			aitext = responseText
+		} else {
+			err, responseText, toolCount, usage = StreamHandler(c, resp, meta.Mode, meta.ActualModelName, meta.FixedContent)
+			aitext = responseText
+		}
 		if usage == nil || usage.TotalTokens == 0 {
 			usage = ResponseText2Usage(responseText, meta.ActualModelName, meta.PromptTokens)
 		}
@@ -152,6 +157,9 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, meta *util.Rel
 			err, _ = ImageHandler(c, resp)
 		case constant.RelayModeEdits:
 			err, _ = ImagesEditsHandler(c, resp)
+		case constant.RelayResponses:
+			err, usage, aitext = ResponsesHandler(c, resp, meta.PromptTokens, meta.OriginModelName)
+
 		default:
 			err, usage, aitext = Handler(c, resp, meta.PromptTokens, meta.ActualModelName)
 		}
