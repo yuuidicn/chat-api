@@ -41,7 +41,9 @@ func (a *Adaptor) GetRequestURL(meta *util.RelayMeta) (string, error) {
 		requestURL = fmt.Sprintf("%s?api-version=%s", requestURL, meta.Config.APIVersion)
 		task := strings.TrimPrefix(requestURL, "/v1/")
 		model_ := meta.ActualModelName
-		model_ = strings.Replace(model_, ".", "", -1)
+		if !strings.HasPrefix(model_, "gpt-4.5") && !strings.HasPrefix(model_, "gpt-4.1") {
+			model_ = strings.Replace(model_, ".", "", -1)
+		}
 		//https://github.com/songquanpeng/one-api/issues/1191
 		// {your endpoint}/openai/deployments/{your azure_model}/chat/completions?api-version={api_version}
 		requestURL = fmt.Sprintf("/openai/deployments/%s/%s", model_, task)
@@ -86,7 +88,7 @@ func (a *Adaptor) ConvertRequest(c *gin.Context, meta *util.RelayMeta, request *
 			IncludeUsage: true,
 		}
 	}
-	if strings.HasPrefix(request.Model, "o1") || strings.HasPrefix(request.Model, "o3") {
+	if strings.HasPrefix(request.Model, "o1") || strings.HasPrefix(request.Model, "o3") || strings.HasPrefix(request.Model, "o4") {
 		if request.MaxCompletionTokens == 0 && request.MaxTokens != 0 {
 			request.MaxCompletionTokens = request.MaxTokens
 			request.MaxTokens = 0
@@ -154,9 +156,9 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, meta *util.Rel
 	} else {
 		switch meta.Mode {
 		case constant.RelayModeImagesGenerations:
-			err, _ = ImageHandler(c, resp)
+			err, usage = ImageHandler(c, resp)
 		case constant.RelayModeEdits:
-			err, _ = ImagesEditsHandler(c, resp)
+			err, usage = ImagesEditsHandler(c, resp)
 		case constant.RelayResponses:
 			err, usage, aitext = ResponsesHandler(c, resp, meta.PromptTokens, meta.OriginModelName)
 

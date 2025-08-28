@@ -47,6 +47,8 @@ var awsModelIDMap = map[string]string{
 	"claude-3-5-sonnet-20241022": "anthropic.claude-3-5-sonnet-20241022-v2:0",
 	"claude-3-5-haiku-20241022":  "anthropic.claude-3-5-haiku-20241022-v1:0",
 	"claude-3-7-sonnet-20250219": "anthropic.claude-3-7-sonnet-20250219-v1:0",
+	"claude-sonnet-4-20250514":   "anthropic.claude-sonnet-4-20250514-v1:0",
+	"claude-opus-4-20250514":     "anthropic.claude-opus-4-20250514-v1:0",
 	"command-r":                  "cohere.command-r-v1:0",
 	"command-r-plus":             "cohere.command-r-plus-v1:0",
 }
@@ -75,6 +77,8 @@ func awsCrossModelID(requestModel string, cross string) (string, error) {
 		"claude-3-5-sonnet-20241022": prefix + "anthropic.claude-3-5-sonnet-20241022-v2:0",
 		"claude-3-5-haiku-20241022":  prefix + "anthropic.claude-3-5-haiku-20241022-v1:0",
 		"claude-3-7-sonnet-20250219": prefix + "anthropic.claude-3-7-sonnet-20250219-v1:0",
+		"claude-sonnet-4-20250514":   prefix + "anthropic.claude-sonnet-4-20250514-v1:0",
+		"claude-opus-4-20250514":     prefix + "anthropic.claude-opus-4-20250514-v1:0",
 	}
 
 	if awsModelID, ok := modelMap[requestModel]; ok {
@@ -205,6 +209,25 @@ func StreamHandler(c *gin.Context, awsCli *bedrockruntime.Client) (*relaymodel.E
 		event, ok := <-stream.Events()
 		if !ok {
 			if responseText != "" {
+				// 直接只发送一条带有usage信息的消息，不产生额外的空消息
+				usageResponse := openai.ChatCompletionsStreamResponse{
+					Id:      id,
+					Object:  "chat.completion.chunk",
+					Created: createdTime,
+					Model:   c.GetString(ctxkey.OriginalModel),
+					Choices: []openai.ChatCompletionsStreamResponseChoice{},
+					Usage: &relaymodel.Usage{
+						PromptTokens:     usage.PromptTokens,
+						CompletionTokens: usage.CompletionTokens,
+						TotalTokens:      usage.PromptTokens + usage.CompletionTokens,
+					},
+				}
+
+				usageJsonStr, err := json.Marshal(usageResponse)
+				if err == nil {
+					c.Render(-1, common.CustomEvent{Data: "data: " + string(usageJsonStr)})
+				}
+
 				c.Render(-1, common.CustomEvent{Data: "data: [DONE]"})
 			}
 			return false
@@ -224,7 +247,7 @@ func StreamHandler(c *gin.Context, awsCli *bedrockruntime.Client) (*relaymodel.E
 				usage.PromptTokens += meta.Usage.InputTokens
 				usage.CompletionTokens += meta.Usage.OutputTokens
 				if len(meta.Id) > 0 { // only message_start has an id, otherwise it's a finish_reason event.
-					id = fmt.Sprintf("chatcmpl-%s", meta.Id)
+					id = meta.Id
 					return true
 				} else { // finish_reason case
 					anthropic.ProcessToolCalls(&lastToolCallChoice, response)

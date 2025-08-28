@@ -34,6 +34,12 @@ var ModelRatio = map[string]float64{
 	"gpt-4o-mini-2024-07-18":             0.075,
 	"gpt-4o-2024-08-06":                  1.25,
 	"gpt-4o-2024-11-20":                  1.25,
+	"gpt-4.1":                            1,
+	"gpt-4.1-2025-04-14":                 1,
+	"gpt-4.1-mini":                       0.2,
+	"gpt-4.1-mini-2025-04-14":            0.2,
+	"gpt-4.1-nano":                       0.05,
+	"gpt-4.1-nano-2025-04-14":            0.05,
 	"chatgpt-4o-latest":                  2.5,
 	"o1-preview":                         7.5,
 	"o1-preview-2024-09-12":              7.5,
@@ -45,6 +51,12 @@ var ModelRatio = map[string]float64{
 	"o1-pro":                             75,
 	"o3-mini":                            0.55,
 	"o3-mini-2025-01-31":                 0.55,
+	"o3":                                 1,
+	"o3-2025-04-16":                      1,
+	"o3-pro-2025-06-10":                  10,
+	"o3-pro":                             10,
+	"o4-mini":                            0.55,
+	"o4-mini-2025-04-16":                 0.55,
 	"gpt-3.5-turbo":                      0.25, // $0.0005 / 1K tokens
 	"gpt-3.5-turbo-0301":                 0.75,
 	"gpt-3.5-turbo-0613":                 0.75,
@@ -79,6 +91,7 @@ var ModelRatio = map[string]float64{
 	"text-moderation-latest":             0.1,
 	"dall-e-2":                           8,  // $0.016 - $0.020 / image
 	"dall-e-3":                           20, // $0.040 - $0.120 / image
+	"gpt-image-1":                        5,  // $0.040 - $0.120 / image
 	"gpt-4o-realtime-preview":            2.5,
 	"gpt-4o-realtime-preview-2024-10-01": 2.5,
 	"gpt-4o-realtime-preview-2024-12-17": 2.5,
@@ -96,6 +109,8 @@ var ModelRatio = map[string]float64{
 	"claude-3-5-sonnet-20240620": 3.0 / 1000 * USD,
 	"claude-3-5-sonnet-20241022": 3.0 / 1000 * USD,
 	"claude-3-7-sonnet-20250219": 3.0 / 1000 * USD,
+	"claude-sonnet-4-20250514":   1.5,
+	"claude-opus-4-20250514":     7.5,
 	// https://cloud.baidu.com/doc/WENXINWORKSHOP/s/hlrk4akp7
 	"ERNIE-4.0-8K":       0.120 * RMB,
 	"ERNIE-3.5-8K":       0.012 * RMB,
@@ -114,21 +129,38 @@ var ModelRatio = map[string]float64{
 	"bge-large-en":       0.002 * RMB,
 	"tao-8k":             0.002 * RMB,
 	// https://ai.google.dev/pricing
-	"PaLM-2":                             1,
-	"gemini-pro":                         1, // $0.00025 / 1k characters -> $0.001 / 1k tokens
-	"gemini-pro-vision":                  1, // $0.00025 / 1k characters -> $0.001 / 1k tokens
-	"gemini-1.0-pro-vision-001":          1,
-	"gemini-1.0-pro-001":                 1,
-	"gemini-1.5-pro":                     1,
-	"gemini-1.5-pro-exp-0801":            1,
-	"gemini-1.5-pro-exp-0827":            1,
-	"gemini-1.5-flash-exp-0827":          1,
-	"gemini-1.5-pro-002":                 1,
-	"gemini-1.5-flash-002":               1,
-	"gemini-exp-1114":                    1,
-	"gemini-exp-1206":                    1,
-	"gemini-2.0-flash-thinking-exp-1219": 1,
-	"gemini-2.0-flash-exp":               1,
+	"PaLM-2":                              1,
+	"gemini-pro":                          1, // $0.00025 / 1k characters -> $0.001 / 1k tokens
+	"gemini-pro-vision":                   1, // $0.00025 / 1k characters -> $0.001 / 1k tokens
+	"gemini-1.0-pro-vision-001":           1,
+	"gemini-1.0-pro-001":                  1,
+	"gemini-1.5-pro":                      1,
+	"gemini-1.5-pro-exp-0801":             1,
+	"gemini-1.5-pro-exp-0827":             1,
+	"gemini-1.5-flash-exp-0827":           1,
+	"gemini-1.5-pro-002":                  1,
+	"gemini-1.5-flash-002":                1,
+	"gemini-exp-1114":                     1,
+	"gemini-exp-1206":                     1,
+	"gemini-2.0-flash-thinking-exp-1219":  1,
+	"gemini-2.0-flash-exp":                1,
+	"gemini-2.5-pro-exp-03-25":            1,
+	"gemini-2.5-flash-preview-04-17":      1,
+	"gemini-2.5-pro-preview-05-06":        1,
+	"gemini-2.5-pro":                      1,
+	"gemini-2.5-flash-preview-05-20":      1,
+	"gemini-2.5-pro-preview-06-05":        1,
+	"gemini-2.5-flash-lite-preview-06-17": 1,
+
+	"grok-3-beta":           1.5,
+	"grok-3-mini-beta":      0.15,
+	"grok-3-fast-beta":      1.5,
+	"grok-3-mini-fast-beta": 0.15,
+	"grok-3-fast":           1.5,
+	"grok-3-mini":           0.15,
+	"grok-3-mini-fast":      0.15,
+	"grok-4-0709":           1.5,
+
 	// https://open.bigmodel.cn/pricing
 	"glm-4":                     0.1 * RMB,
 	"glm-4v":                    0.1 * RMB,
@@ -349,6 +381,8 @@ func GetCompletionRatio(name string) float64 {
 	}
 	if strings.HasPrefix(name, "gpt-4") {
 		switch {
+		case strings.HasPrefix(name, "gpt-4.1"):
+			return 4
 		case strings.HasPrefix(name, "gpt-4.5"):
 			return 2
 		case strings.HasPrefix(name, "gpt-4o"):
@@ -362,7 +396,7 @@ func GetCompletionRatio(name string) float64 {
 			return 2
 		}
 	}
-	if strings.HasPrefix(name, "o1") || strings.HasPrefix(name, "o3") {
+	if strings.HasPrefix(name, "o1") || strings.HasPrefix(name, "o3") || strings.HasPrefix(name, "o4") {
 		return 4
 	}
 	lowercaseName := strings.ToLower(name)

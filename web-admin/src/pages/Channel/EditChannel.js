@@ -19,13 +19,12 @@ const STATUS_CODE_MAPPING_EXAMPLE = {
     'gemini-1.5-pro-latest',
     'gemini-1.5-flash-latest',
     'gemini-exp-1206',
-    'gemini-2.0-flash-exp',
-    'gemini-2.0-flash',
-    'gemini-2.0-flash-001',
-    'gemini-2.0-flash-lite-preview',
-    'gemini-2.0-flash-lite-preview-02-05',
-    'gemini-2.0-pro-exp',
-    'gemini-2.0-pro-exp-02-05',
+	'gemini-2.0-flash', 'gemini-2.0-flash-001', 'gemini-2.0-flash-lite-preview', 'gemini-2.0-flash-lite-preview-02-05',
+	'gemini-2.0-pro-exp', 'gemini-2.0-pro-exp-02-05',
+	'gemini-2.0-flash-exp', 'gemini-2.0-flash-thinking-exp-01-21', 
+	'gemini-2.5-pro-exp-03-25', 'gemini-2.5-flash-preview-04-17',
+    'gemini-2.5-pro-preview-05-06', 'gemini-2.5-pro', 'gemini-2.5-flash-preview-05-20',
+    'gemini-2.5-pro-preview-06-05', 'gemini-2.5-flash-lite-preview-06-17',
 ];
 function type2secretPrompt(type) {
     // inputs.type === 15 ? '按照如下格式输入：APIKey|SecretKey' : (inputs.type === 18 ? '按照如下格式输入：APPID|APISecret|APIKey' : '请输入渠道对应的鉴权密钥')
@@ -98,7 +97,7 @@ const EditChannel = (props) => {
     const [priority, setPriority] = useState(0);
     const [weight, setWeight] = useState(0);
     const [rateLimited, setRateLimited] = useState(false);
-    const [rateLimitedConut, setRateLimitedConut] = useState(0);
+    const [rateLimitedConut, setRateLimitedConut] = useState(3);
     const [istools, setIstools] = useState(true);
     const [isimageurenabled, setIsImageURLEnabled] = useState(false);
     const [claudeoriginalrequest, setClaudeOriginalRequest] = useState(false);
@@ -152,9 +151,14 @@ const EditChannel = (props) => {
                     localModels = ['hunyuan'];
                     break;
                 case 24:
-                    localModels = ['gemini-1.5-pro-001','gemini-1.5-pro-latest','gemini-1.5-flash-latest','gemini-1.5-pro-exp-0801',
-                        'gemini-1.5-pro-exp-0827','gemini-1.5-flash-exp-0827','gemini-1.5-pro-002','gemini-1.5-flash-002','gemini-exp-1114',
-                        'gemini-exp-1206','gemini-2.0-flash-thinking-exp-1219','gemini-2.0-flash-exp'];
+                    localModels = ['gemini-1.5-pro-002', 'gemini-1.5-flash-002',  'gemini-exp-1206',
+                                    'gemini-2.0-flash', 'gemini-2.0-flash-001', 'gemini-2.0-flash-lite-preview', 'gemini-2.0-flash-lite-preview-02-05',
+                                    'gemini-2.0-pro-exp', 'gemini-2.0-pro-exp-02-05',
+                                    'gemini-2.0-flash-exp', 'gemini-2.0-flash-thinking-exp-01-21', 
+                                    'gemini-2.5-pro-exp-03-25', 'gemini-2.5-flash-preview-04-17',
+                                    'gemini-2.5-pro-preview-05-06', 'gemini-2.5-pro', 'gemini-2.5-flash-preview-05-20',
+                                    'gemini-2.5-pro-preview-06-05', 'gemini-2.5-flash-lite-preview-06-17',
+                                ];
                     break;
                 case 2:
                     localModels = ['midjourney'];
@@ -191,6 +195,9 @@ const EditChannel = (props) => {
                     break;
                 case 41:
                     localModels = ['Doubao-pro-128k','Doubao-pro-32k','Doubao-pro-4k','Doubao-lite-128k','Doubao-lite-32k','Doubao-lite-4k'];
+                    break;
+                case 43:
+                    localModels = ['grok-3-beta', 'grok-3-mini-beta', 'grok-3-fast-beta', 'grok-3-mini-fast-beta', 'grok-2-image', 'grok-2', 'grok-2-vision', 'grok-beta', 'grok-vision-beta'];
                     break;
     
             }
